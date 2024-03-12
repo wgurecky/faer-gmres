@@ -11,4 +11,5 @@ path = 'src/lib.rs'
 
 [dependencies]
 assert_approx_eq = "*"
+num-traits = "*"
 faer = {version = "0.18.2"}
