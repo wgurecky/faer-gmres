@@ -39,29 +39,26 @@ fn arnoldi(a: SparseColMatRef<usize, f64>, q: &Vec<Mat<f64>>, k: usize) -> (Vec<
     let q_col: MatRef<f64> = q[k].as_ref();
     let mut qv: Mat<f64> = a * q_col;
     let mut h = Vec::with_capacity(k + 2);
-
     for i in 0..=k {
         let qci: MatRef<f64> = q[i].as_ref();
         let ht = qv.transpose() * &qci;
-        h[i] = ht.read(0, 0);
+        h.push( ht.read(0, 0) );
         qv = qv - (qci * faer::scale(h[i]));
     }
-
     h.push(qv.norm_l2());
     qv = qv * faer::scale(1./h[k + 1]);
-
     return (h, qv);
 }
 
 
-/// Generallized minimal residua method
+/// Generalized minimal residual method
 pub fn gmres(
     a: SparseColMatRef<usize, f64>,
     b: MatRef<f64>,
-    x: MatMut<f64>,
+    x: MatRef<f64>,
     max_iter: usize,
     threshold: f64,
-) -> Result<Mat<f64>, String> {
+) -> Result<(Mat<f64>, f64, usize), String> {
     // Use x as the initial vector
     // compute initial residual
     let r = b - a * x.as_ref();
@@ -84,10 +81,11 @@ pub fn gmres(
     let mut qs = Vec::with_capacity(max_iter);
     qs.push(q.clone());
 
+    let mut k_iters = 0;
     for k in 0..max_iter {
         let (mut hk, qk) = arnoldi(a, &qs, k);
         apply_givens_rotation(&mut hk, &mut cs, &mut sn, k);
-        hs.push(hk.clone());
+        hs.push(hk);
         qs.push(qk);
 
         // Update the residual vector
@@ -97,7 +95,7 @@ pub fn gmres(
 
         // Save the error
         e.push(error);
-
+        k_iters += 1;
         if error <= threshold {
             break;
         }
@@ -113,7 +111,8 @@ pub fn gmres(
             h_triplets.push((h_i, c, hvec[h_i]));
         }
     }
-    let h_sprs = SparseColMat::try_new_from_triplets(h_len, (&hs).len(), &h_triplets).unwrap();
+    let h_sprs = SparseColMat::<usize, f64>::try_new_from_triplets(
+        h_len, (&hs).len(), &h_triplets).unwrap();
 
     // build full sparse Q matrix
     let mut q_triplets = Vec::new();
@@ -124,15 +123,15 @@ pub fn gmres(
             q_triplets.push((q_i, c, qvec.read(q_i, 0)));
         }
     }
-    let q_sprs = SparseColMat::try_new_from_triplets(q_len, (&qs).len(), &q_triplets).unwrap();
+    let q_sprs = SparseColMat::<usize, f64>::try_new_from_triplets
+        (q_len, (&qs).len(), &q_triplets).unwrap();
 
     // compute solution
     let h_qr = h_sprs.sp_qr().unwrap();
-    let y = h_qr.solve(&beta);
-
+    let y = h_qr.solve(&beta.get(0..k_iters+1, 0..1));
 
     if error <= threshold {
-        Ok(x.as_ref() + q_sprs * y)
+        Ok((x.as_ref() + q_sprs * y, error, k_iters))
     } else {
         Err(format!(
             "GMRES did not converge. Error: {}. Threshold: {}",
@@ -144,11 +143,48 @@ pub fn gmres(
 
 #[cfg(test)]
 mod test_faer_gmres {
+    use assert_approx_eq::assert_approx_eq;
+
     // bring everything from above (parent) module into scope
     use super::*;
 
     #[test]
     fn test_gmres() {
+    let a_test_triplets = vec![
+        (0, 0, 1.0),
+        (1, 1, 2.0),
+        (2, 2, 3.0),
+        ];
+    let a_test = SparseColMat::<usize, f64>::try_new_from_triplets(
+        3, 3,
+        &a_test_triplets).unwrap();
+
+    // rhs
+    let b = faer::mat![
+        [2.0],
+        [2.0],
+        [2.0],
+        ];
+
+    // initia sol guess
+    let x0 = faer::mat![
+        [0.0],
+        [0.0],
+        [0.0],
+        ];
+
+    let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 10, 1e-8).unwrap();
+    println!("Result x: {:?}", res_x);
+    println!("Error x: {:?}", err);
+    println!("Iters : {:?}", iters);
+    assert!(err < 1e-4);
+    assert!(iters < 10);
+
+    // expect result for x to be [2,1,2/3]
+    assert_approx_eq!(res_x.read(0, 0), 2.0, 1e-12);
+    assert_approx_eq!(res_x.read(1, 0), 1.0, 1e-12);
+    assert_approx_eq!(res_x.read(2, 0), 2.0/3.0, 1e-12);
+
     }
 
     #[test]
