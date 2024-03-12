@@ -10,6 +10,11 @@ Use
 
 Example use:
 
+    use faer_gmres::gmres;
+    use faer::prelude::*;
+    use faer::sparse::*;
+    use faer::mat;
+
     // create faer sparse mat from triplets
     let a_test_triplets = vec![
         (0, 0, 1.0),
@@ -27,7 +32,7 @@ Example use:
         [2.0],
         ];
 
-    // initia sol guess
+    // init sol guess
     let x0 = faer::mat![
         [0.0],
         [0.0],
