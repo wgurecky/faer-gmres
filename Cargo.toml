@@ -2,14 +2,17 @@
 name = "faer_gmres"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/wgurecky/faer-gmres"
+keywords = ["faer", "math", "gmres", "sparse"]
+license = "MIT"
+readme = "readme.md"
+exclude = [".github/",]
 
 [lib]
 name = "faer_gmres"
-# dylib emits .so, rlib setting emits rust lib files
-crate-type = ["cdylib", "rlib"]
 path = 'src/lib.rs'
 
 [dependencies]
-assert_approx_eq = "*"
-num-traits = "*"
+assert_approx_eq = "1.1.0"
+num-traits = "0.2.18"
 faer = {version = "0.18.2"}
