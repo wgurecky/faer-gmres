@@ -48,6 +48,43 @@ pub struct GmresError<T>
     msg: String,
 }
 
+pub trait LinOp<T>
+    where
+    T: faer::RealField + Float
+{
+    fn apply_linop_to_vec(&self, target: MatMut<T>);
+}
+
+pub struct JacobiPreconLinOp<'a, T>
+    where
+    T: faer::RealField + Float
+{
+    m: SparseColMatRef<'a, usize, T>,
+}
+impl <'a, T> LinOp<T> for JacobiPreconLinOp<'_, T>
+    where
+    T: faer::RealField + Float + faer::SimpleEntity
+{
+    fn apply_linop_to_vec(&self, mut target: MatMut<T>) {
+        for i in 0..self.m.nrows()
+        {
+            let v = target.read(i, 0);
+            target.write(i, 0,
+                 v * (T::from(1.0).unwrap() / self.m[(i, i)] ));
+        }
+    }
+}
+impl <'a, T> JacobiPreconLinOp <'a, T>
+    where
+    T: faer::RealField + Float
+{
+    pub fn new(m_in: SparseColMatRef<'a, usize, T>) -> Self {
+        Self {
+            m: m_in,
+        }
+    }
+}
+
 
 /// Calculate the givens rotation matrix
 fn givens_rotation<T>(v1: T, v2: T) -> (T, T)
@@ -108,18 +145,23 @@ fn arnoldi<T>(a: SparseColMatRef<usize, T>, q: &Vec<Mat<T>>, k: usize) -> (Vec<T
 
 
 /// Generalized minimal residual method
-pub fn gmres<T>(
-    a: SparseColMatRef<usize, T>,
+pub fn gmres<'a, T>(
+    a: SparseColMatRef<'a, usize, T>,
     b: MatRef<T>,
     x: MatRef<T>,
     max_iter: usize,
     threshold: T,
+    m: Option<Box<dyn LinOp<T> + 'a>>
 ) -> Result<(Mat<T>, T, usize), GmresError<T>>
     where
     T: faer::RealField + Float
 {
     // compute initial residual
-    let r = b - a * x.as_ref();
+    let mut r = b - a * x.as_ref();
+    match m {
+        Some(m) => m.apply_linop_to_vec(r.as_mut()),
+        _ => {}
+    }
 
     let b_norm = b.norm_l2();
     let r_norm = r.norm_l2();
@@ -202,13 +244,14 @@ pub fn gmres<T>(
 }
 
 /// Restarted Generalized minimal residual method
-pub fn restarted_gmres<T>(
-    a: SparseColMatRef<usize, T>,
+pub fn restarted_gmres<'a, T>(
+    a: SparseColMatRef<'a, usize, T>,
     b: MatRef<T>,
     x: MatRef<T>,
     max_iter_inner: usize,
     max_iter_outer: usize,
     threshold: T,
+    m: Option<Box<dyn LinOp<T> + 'a>>
 ) -> Result<(Mat<T>, T, usize), String>
     where
     T: faer::RealField + Float
@@ -219,7 +262,8 @@ pub fn restarted_gmres<T>(
     let mut iters = 0;
     for _ko in 0..max_iter_outer {
         let res = gmres(
-            a.as_ref(), b.as_ref(), res_x.as_ref(), max_iter_inner, threshold);
+            a.as_ref(), b.as_ref(), res_x.as_ref(),
+            max_iter_inner, threshold, None);
         match res {
             // done
             Ok(res) => {
@@ -282,7 +326,49 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 10, 1e-8).unwrap();
+        let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 10, 1e-8, None).unwrap();
+        println!("Result x: {:?}", res_x);
+        println!("Error x: {:?}", err);
+        println!("Iters : {:?}", iters);
+        assert!(err < 1e-4);
+        assert!(iters < 10);
+
+        // expect result for x to be [2,1,2/3]
+        assert_approx_eq!(res_x.read(0, 0), 2.0, 1e-12);
+        assert_approx_eq!(res_x.read(1, 0), 1.0, 1e-12);
+        assert_approx_eq!(res_x.read(2, 0), 2.0/3.0, 1e-12);
+    }
+
+    #[test]
+    fn test_gmres_1b() {
+        let a_test_triplets = vec![
+            (0, 0, 1.0),
+            (1, 1, 2.0),
+            (2, 2, 3.0),
+            ];
+        let a_test = SparseColMat::<usize, f64>::try_new_from_triplets(
+            3, 3,
+            &a_test_triplets).unwrap();
+
+        // rhs
+        let b = faer::mat![
+            [2.0],
+            [2.0],
+            [2.0],
+            ];
+
+        // initia sol guess
+        let x0 = faer::mat![
+            [0.0],
+            [0.0],
+            [0.0],
+            ];
+
+        // preconditioner
+        let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
+
+        let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 10, 1e-8, 
+                                        Some(Box::new(jacobi_pre))).unwrap();
         println!("Result x: {:?}", res_x);
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -333,7 +419,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 100, 1e-6).unwrap();
+        let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 100, 1e-6, None).unwrap();
         println!("Result x: {:?}", res_x);
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -386,7 +472,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 100, 1e-6).unwrap();
+        let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 100, 1e-6, None).unwrap();
         println!("Result x: {:?}", res_x);
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -441,7 +527,8 @@ mod test_faer_gmres {
             ];
 
         let (res_x, err, iters) = restarted_gmres(
-            a_test.as_ref(), b.as_ref(), x0.as_ref(), 3, 30, 1e-6).unwrap();
+            a_test.as_ref(), b.as_ref(), x0.as_ref(), 3, 30,
+            1e-6, None).unwrap();
         println!("Result x: {:?}", res_x);
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
