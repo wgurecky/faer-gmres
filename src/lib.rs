@@ -118,7 +118,20 @@ fn apply_givens_rotation<T>(h: &mut Vec<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, k:
 }
 
 /// Arnoldi decomposition for sparse matrices
-fn arnoldi<T>(a: SparseColMatRef<usize, T>, q: &Vec<Mat<T>>, k: usize) -> (Vec<T>, Mat<T>)
+///
+/// # Arguments
+/// * `a`- The sparse matrix used to build the krylov subspace by forming [k, Ak, A^2k, A^3k...]
+/// * `q`- Vector of all prior krylov column vecs
+/// * `k`- Current iteration
+/// * `m`- An optional preconditioner that is applied to the original system such that
+///        the new krylov subspace built is [M^{-1}k, M^{-1}Ak, M^{-1}A^2k, ...].
+///        If None, no preconditioner is applied.
+fn arnoldi<'a, T>(
+    a: SparseColMatRef<'a, usize, T>,
+    q: &Vec<Mat<T>>,
+    k: usize,
+    m: &Option<Box<dyn LinOp<T> + 'a>>
+) -> (Vec<T>, Mat<T>)
     where
     T: faer::RealField + Float
 {
@@ -130,6 +143,13 @@ fn arnoldi<T>(a: SparseColMatRef<usize, T>, q: &Vec<Mat<T>>, k: usize) -> (Vec<T
     let mut qv: Mat<T> = faer::Mat::zeros(q_col.nrows(), 1);
     linalg::matmul::sparse_dense_matmul(
         qv.as_mut(), a.as_ref(), q_col.as_ref(), None, T::from(1.0).unwrap(), faer::get_global_parallelism());
+
+    // Apply left preconditioner if supplied
+    match m {
+        Some(m) => m.apply_linop_to_vec(qv.as_mut()),
+        _ => {}
+    }
+
     let mut h = Vec::with_capacity(k + 2);
     for i in 0..=k {
         let qci: MatRef<T> = q[i].as_ref();
@@ -158,8 +178,8 @@ pub fn gmres<'a, T>(
 {
     // compute initial residual
     let mut r = b - a * x.as_ref();
-    match m {
-        Some(m) => m.apply_linop_to_vec(r.as_mut()),
+    match &m {
+        Some(m) => (&m).apply_linop_to_vec(r.as_mut()),
         _ => {}
     }
 
@@ -183,7 +203,7 @@ pub fn gmres<'a, T>(
 
     let mut k_iters = 0;
     for k in 0..max_iter {
-        let (mut hk, qk) = arnoldi(a, &qs, k);
+        let (mut hk, qk) = arnoldi(a, &qs, k, &m);
         apply_givens_rotation(&mut hk, &mut cs, &mut sn, k);
         hs.push(hk);
         qs.push(qk);
