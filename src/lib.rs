@@ -55,13 +55,14 @@ pub trait LinOp<T>
     fn apply_linop_to_vec(&self, target: MatMut<T>);
 }
 
+#[derive(Clone)]
 pub struct JacobiPreconLinOp<'a, T>
     where
     T: faer::RealField + Float
 {
     m: SparseColMatRef<'a, usize, T>,
 }
-impl <'a, T> LinOp<T> for JacobiPreconLinOp<'_, T>
+impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
     where
     T: faer::RealField + Float + faer::SimpleEntity
 {
@@ -130,7 +131,7 @@ fn arnoldi<'a, T>(
     a: SparseColMatRef<'a, usize, T>,
     q: &Vec<Mat<T>>,
     k: usize,
-    m: &Option<Box<dyn LinOp<T> + 'a>>
+    m: Option<&dyn LinOp<T>>
 ) -> (Vec<T>, Mat<T>)
     where
     T: faer::RealField + Float
@@ -171,7 +172,7 @@ pub fn gmres<'a, T>(
     x: MatRef<T>,
     max_iter: usize,
     threshold: T,
-    m: Option<Box<dyn LinOp<T> + 'a>>
+    m: Option<&dyn LinOp<T>>
 ) -> Result<(Mat<T>, T, usize), GmresError<T>>
     where
     T: faer::RealField + Float
@@ -203,7 +204,7 @@ pub fn gmres<'a, T>(
 
     let mut k_iters = 0;
     for k in 0..max_iter {
-        let (mut hk, qk) = arnoldi(a, &qs, k, &m);
+        let (mut hk, qk) = arnoldi(a, &qs, k, m);
         apply_givens_rotation(&mut hk, &mut cs, &mut sn, k);
         hs.push(hk);
         qs.push(qk);
@@ -271,7 +272,7 @@ pub fn restarted_gmres<'a, T>(
     max_iter_inner: usize,
     max_iter_outer: usize,
     threshold: T,
-    m: Option<Box<dyn LinOp<T> + 'a>>
+    m: Option<&dyn LinOp<T>>
 ) -> Result<(Mat<T>, T, usize), String>
     where
     T: faer::RealField + Float
@@ -283,7 +284,7 @@ pub fn restarted_gmres<'a, T>(
     for _ko in 0..max_iter_outer {
         let res = gmres(
             a.as_ref(), b.as_ref(), res_x.as_ref(),
-            max_iter_inner, threshold, None);
+            max_iter_inner, threshold, m);
         match res {
             // done
             Ok(res) => {
@@ -388,7 +389,7 @@ mod test_faer_gmres {
         let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
 
         let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 10, 1e-8, 
-                                        Some(Box::new(jacobi_pre))).unwrap();
+                                        Some(&jacobi_pre)).unwrap();
         println!("Result x: {:?}", res_x);
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
