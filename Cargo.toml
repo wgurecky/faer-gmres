@@ -13,6 +13,7 @@ name = "faer_gmres"
 path = 'src/lib.rs'
 
 [dependencies]
+thiserror = "1.0"
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
 faer = {version = "0.18.2"}
