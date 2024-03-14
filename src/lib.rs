@@ -560,6 +560,19 @@ mod test_faer_gmres {
         assert_approx_eq!(res_x.read(2, 0), -0.657575, 1e-4);
         assert_approx_eq!(res_x.read(3, 0), -0.181680, 1e-4);
         assert_approx_eq!(res_x.read(4, 0), 0.292447, 1e-4);
+
+        // with preconditioning
+        let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
+        let (res_x_precon, err_precon, iters_precon) = restarted_gmres(
+            a_test.as_ref(), b.as_ref(), x0.as_ref(), 3, 30,
+            1e-6, Some(&jacobi_pre)).unwrap();
+        assert!(iters_precon < iters);
+        assert!(err_precon < 1e-4);
+        assert_approx_eq!(res_x_precon.read(0, 0), 0.037919, 1e-4);
+        assert_approx_eq!(res_x_precon.read(1, 0), 0.888551, 1e-4);
+        assert_approx_eq!(res_x_precon.read(2, 0), -0.657575, 1e-4);
+        assert_approx_eq!(res_x_precon.read(3, 0), -0.181680, 1e-4);
+        assert_approx_eq!(res_x_precon.read(4, 0), 0.292447, 1e-4);
     }
 
     #[test]
