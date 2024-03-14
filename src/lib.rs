@@ -67,11 +67,12 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
     T: faer::RealField + Float + faer::SimpleEntity
 {
     fn apply_linop_to_vec(&self, mut target: MatMut<T>) {
-        for i in 0..self.m.nrows()
+        let eps = T::from(1e-20).unwrap();
+        for i in 0..target.nrows()
         {
             let v = target.read(i, 0);
             target.write(i, 0,
-                 v * (T::from(1.0).unwrap() / self.m[(i, i)] ));
+                 v * (T::from(1.0).unwrap() / (self.m[(i, i)] + eps) ));
         }
     }
 }
