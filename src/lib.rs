@@ -68,11 +68,13 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
 {
     fn apply_linop_to_vec(&self, mut target: MatMut<T>) {
         let eps = T::from(1e-20).unwrap();
+        let one_c = T::from(1.0).unwrap();
+        let zero_c = T::from(0.0).unwrap();
         for i in 0..target.nrows()
         {
             let v = target.read(i, 0);
             target.write(i, 0,
-                 v * (T::from(1.0).unwrap() / (self.m[(i, i)] + eps) ));
+                 v * (one_c / (*self.m.as_ref().get(i, i).unwrap_or(&zero_c) + eps) ));
         }
     }
 }
