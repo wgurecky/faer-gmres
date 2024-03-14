@@ -1,8 +1,10 @@
 [package]
 name = "faer_gmres"
-version = "0.1.0"
+description = "GMRES implementation using faer"
+version = "0.0.1"
 edition = "2021"
 repository = "https://github.com/wgurecky/faer-gmres"
+homepage = "https://github.com/wgurecky/faer-gmres"
 keywords = ["faer", "math", "gmres", "sparse"]
 license = "MIT"
 readme = "readme.md"
