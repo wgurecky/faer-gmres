@@ -1,37 +1,34 @@
 use faer_gmres::{gmres, restarted_gmres, JacobiPreconLinOp};
 use faer::prelude::*;
 use faer::sparse::*;
-use faer::mat;
-use std::error::Error;
-use csv::Reader;
+use std::fs::read_to_string;
 
 
 fn main() {
-    // read the sparse matrix from file
     let mut a_triplets = vec![];
-    let file = std::fs::File::open("./examples/data/fidap001.txt").unwrap();
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .delimiter(b' ')
-        .flexible(true)
-        .from_reader(file);
-    for result in rdr.records() {
-        let record = result.unwrap();
-        let idx_i = record[0].parse::<usize>().unwrap() - 1;
-        let idx_j = record[1].parse::<usize>().unwrap() - 1;
-        let val = record[record.len()-1].parse::<f64>().unwrap();
+    let mut b_rhs = vec![];
+
+    // read A matrix from file
+    for line in read_to_string("./examples/data/fidap001.txt").unwrap().lines() {
+        let mut tmp_vec_line = vec![];
+        let iter = line.split_whitespace();
+        for word in iter {
+            tmp_vec_line.push(word);
+        }
+        let idx_i = tmp_vec_line[0].parse::<usize>().unwrap()-1;
+        let idx_j = tmp_vec_line[1].parse::<usize>().unwrap()-1;
+        let val = tmp_vec_line[tmp_vec_line.len()-1].parse::<f64>().unwrap();
         a_triplets.push((idx_i, idx_j, val));
     }
-    // read the rhs from file
-    let mut b_rhs = vec![];
-    let file = std::fs::File::open("./examples/data/fidap001_rhs1.txt").unwrap();
-    let mut rdr = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .delimiter(b' ')
-        .from_reader(file);
-    for result in rdr.records() {
-        let record = result.unwrap();
-        let val = record[record.len()-1].parse::<f64>().unwrap();
+
+    // read rhs from file
+    for line in read_to_string("./examples/data/fidap001_rhs1.txt").unwrap().lines() {
+        let mut tmp_vec_line = vec![];
+        let iter = line.split_whitespace();
+        for word in iter {
+            tmp_vec_line.push(word);
+        }
+        let val = tmp_vec_line[tmp_vec_line.len()-1].parse::<f64>().unwrap();
         b_rhs.push(val);
     }
 
