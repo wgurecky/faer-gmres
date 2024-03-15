@@ -36,6 +36,9 @@ use faer::sparse::*;
 use faer::mat;
 use num_traits::Float;
 use thiserror::Error;
+use std::time;
+use std::time::Instant;
+use rayon::prelude::*;
 
 #[derive(Error, Debug)]
 pub struct GmresError<T>
@@ -142,11 +145,15 @@ fn arnoldi<'a, T>(
     // Krylov vector
     let q_col: MatRef<T> = q[k].as_ref();
 
-    // let mut qv: Mat<f64> = a * q_col;
+    // let mut qv: Mat<T> = a * q_col;
     // parallel version of above
+    // let now = Instant::now();
     let mut qv: Mat<T> = faer::Mat::zeros(q_col.nrows(), 1);
     linalg::matmul::sparse_dense_matmul(
-        qv.as_mut(), a.as_ref(), q_col.as_ref(), None, T::from(1.0).unwrap(), faer::get_global_parallelism());
+        qv.as_mut(), a.as_ref(), q_col.as_ref(), None, T::from(1.0).unwrap(), faer::Parallelism::Rayon(0));
+        //qv.as_mut(), a.as_ref(), q_col.as_ref(), None, T::from(1.0).unwrap(), faer::get_global_parallelism());
+    // let dt = now.elapsed();
+    // print!("Arnoldi first mult time: {:?}  ", dt);
 
     // Apply left preconditioner if supplied
     match m {
@@ -154,15 +161,42 @@ fn arnoldi<'a, T>(
         _ => {}
     }
 
-    let mut h = Vec::with_capacity(k + 2);
+    let now = Instant::now();
+    let mut dt_a = now.elapsed();
+    let mut dt_b = now.elapsed();
+    // let mut h = Vec::with_capacity(k + 2);
+    let mut h: Vec<T> = vec![T::from(0.0).unwrap(); k+2];
+    // let mut ht: Mat<T> = faer::Mat::zeros(1, 1);
     for i in 0..=k {
-        let qci: MatRef<T> = q[i].as_ref();
-        let ht = qv.transpose() * &qci;
-        h.push( ht.read(0, 0) );
-        qv = qv - (qci * faer::scale(h[i]));
+        let qi_ref = q[i].as_ref();
+        let now_a = Instant::now();
+        // let qci: MatRef<T> = q[i].as_ref();
+        // let ht = qv.transpose() * qi_ref;
+        let b = qv.as_ref().par_row_chunks(10000)
+            .zip(qi_ref.par_row_chunks(10000)).map(|(x, y)| (x.transpose() * y).read(0, 0)).collect::<Vec<T>>();
+        let mut sum_b: T = T::from(0.0).unwrap();
+        for hb in b.iter() {
+            sum_b = sum_b + *hb;
+        }
+        // println!("sum_b: {:?}, ht: {:?}", sum_b, ht);
+        //for qv_row_chunk in qv.as_ref().par_row_chunks(1000).map(|x| x).sum() {
+        //}
+        //a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+        // parallel of above
+        //faer::linalg::matmul::matmul(
+        //    ht.as_mut(), qv.transpose(), q[i].as_ref(), None, T::from(1.0).unwrap(), faer::Parallelism::Rayon(3));
+        // h.push( ht.read(0, 0) );
+        dt_a = now_a.elapsed();
+        let now_b = Instant::now();
+        h[i] = sum_b;
+        qv = qv - (qi_ref * faer::scale(sum_b));
+        dt_b = now_b.elapsed();
     }
+    let dt = now.elapsed();
+    print!("dt_a: {:?}, dt_b: {:?}, Arnoldi loop time: {:?} \n", dt_a, dt_b, dt);
 
-    h.push(qv.norm_l2());
+    // h.push(qv.norm_l2());
+    h[k+1] = qv.norm_l2();
     qv = qv * faer::scale(T::from(1.).unwrap()/h[k + 1]);
     return (h, qv);
 }
@@ -207,10 +241,17 @@ pub fn gmres<'a, T>(
 
     let mut k_iters = 0;
     for k in 0..max_iter {
+        // print!("Inner GMRES iteratrion: {:?}, n_threads: {:?}\n", k, faer::get_global_parallelism());
+        // let now = Instant::now();
         let (mut hk, qk) = arnoldi(a, &qs, k, m);
+        // let dt = now.elapsed();
+        // print!("Arnoldi time: {:?}  ", dt);
+        let now = Instant::now();
         apply_givens_rotation(&mut hk, &mut cs, &mut sn, k);
         hs.push(hk);
         qs.push(qk);
+        // let dt = now.elapsed();
+        // print!("Givens rotation time: {:?}\n", dt);
 
         // Update the residual vector
         beta.write(k+1, 0, -sn[k] * beta.read(k, 0));
@@ -224,6 +265,7 @@ pub fn gmres<'a, T>(
             break;
         }
     }
+    // println!("Done w krylov. Solving...");
 
     // build full sparse H matrix from column vecs
     // create sparse matrix from triplets
