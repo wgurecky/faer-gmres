@@ -8,7 +8,7 @@ homepage = "https://github.com/wgurecky/faer-gmres"
 keywords = ["faer", "math", "gmres", "sparse"]
 license = "MIT"
 readme = "readme.md"
-exclude = [".github/",]
+exclude = [".github/","examples/"]
 
 [lib]
 name = "faer_gmres"
