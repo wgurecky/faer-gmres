@@ -1,6 +1,8 @@
 About
 =====
 
+[![Crates.io](https://img.shields.io/crates/v/faer_gmres)](https://crates.io/crates/faer_gmres)
+
 GMRES in rust using [faer](https://github.com/sarah-ek/faer-rs).
 
 Solves linear systems of the form: Ax=b, where A is sparse.  Depends on faer for sparse matrix implementation and sparse QR solver.
