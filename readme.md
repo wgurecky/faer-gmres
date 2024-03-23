@@ -1,3 +1,5 @@
+[![Crates.io](https://img.shields.io/crates/v/faer_gmres)](https://crates.io/crates/faer_gmres)
+
 About
 =====
 
