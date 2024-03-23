@@ -1,7 +1,7 @@
-[![Crates.io](https://img.shields.io/crates/v/faer_gmres)](https://crates.io/crates/faer_gmres)
-
 About
 =====
+
+[![Crates.io](https://img.shields.io/crates/v/faer_gmres)](https://crates.io/crates/faer_gmres)
 
 GMRES in rust using [faer](https://github.com/sarah-ek/faer-rs).
 
