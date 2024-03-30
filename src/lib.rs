@@ -238,23 +238,20 @@ pub fn gmres<'a, T>(
     let h_sprs = SparseColMat::<usize, T>::try_new_from_triplets(
         h_len, (&hs).len(), &h_triplets).unwrap();
 
-    // build full sparse Q matrix
-    let mut q_triplets = Vec::new();
-    let mut q_len = 0;
-    for (c, qvec) in (&qs).into_iter().enumerate() {
-        q_len = qvec.nrows();
-        for q_i in 0..q_len {
-            q_triplets.push((q_i, c, qvec.read(q_i, 0)));
+
+    // build full Q matrix
+    let mut q_out: Mat<T> = faer::Mat::zeros(qs[0].nrows(), qs.len());
+    for j in 0..q_out.ncols() {
+        for i in 0..q_out.nrows() {
+            q_out.write(i, j, qs[j].read(i, 0));
         }
     }
-    let q_sprs = SparseColMat::<usize, T>::try_new_from_triplets
-        (q_len, (&qs).len(), &q_triplets).unwrap();
 
     // compute solution
     let h_qr = h_sprs.sp_qr().unwrap();
     let y = h_qr.solve(&beta.get(0..k_iters+1, 0..1));
 
-    let sol = x.as_ref() + q_sprs * y;
+    let sol = x.as_ref() + q_out * y;
     if error <= threshold {
         Ok((sol, error, k_iters))
     } else {
