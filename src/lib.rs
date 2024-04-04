@@ -35,9 +35,9 @@ use faer::prelude::*;
 use faer::sparse::*;
 use faer::mat;
 use num_traits::Float;
-use thiserror::Error;
+use std::{error::Error, fmt};
 
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub struct GmresError<T>
     where
     T: faer::RealField + Float
@@ -46,6 +46,20 @@ pub struct GmresError<T>
     error: T,
     tol: T,
     msg: String,
+}
+
+impl <T> Error for GmresError <T>
+    where
+    T: faer::RealField + Float
+{}
+
+impl <T> fmt::Display for GmresError<T>
+    where
+    T: faer::RealField + Float
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "GmresError")
+    }
 }
 
 pub trait LinOp<T>
@@ -259,7 +273,7 @@ pub fn gmres<'a, T>(
             cur_x: sol,
             error: error,
             tol: threshold,
-            msg: "GMRES did not converge. Error: {:?}. Threshold: {:?}".to_string()}
+            msg: format!("GMRES did not converge. Error: {:?}. Threshold: {:?}", error, threshold)}
         )
     }
 }
@@ -273,7 +287,7 @@ pub fn restarted_gmres<'a, T>(
     max_iter_outer: usize,
     threshold: T,
     m: Option<&dyn LinOp<T>>
-) -> Result<(Mat<T>, T, usize), String>
+) -> Result<(Mat<T>, T, usize), GmresError<T>>
     where
     T: faer::RealField + Float
 {
@@ -307,10 +321,12 @@ pub fn restarted_gmres<'a, T>(
     if error <= threshold {
         Ok((res_x, error, tot_iters))
     } else {
-        Err(format!(
-            "GMRES did not converge. Error: {:?}. Threshold: {:?}",
-            error, threshold
-        ))
+        Err(GmresError{
+            cur_x: res_x,
+            error: error,
+            tol: threshold,
+            msg: format!("GMRES did not converge. Error: {:?}. Threshold: {:?}", error, threshold)}
+        )
     }
 }
 
