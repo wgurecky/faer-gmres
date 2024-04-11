@@ -47,7 +47,8 @@ fn main() {
     let x0 = faer::Mat::zeros(216, 1);
 
     // solve the system
-    let (res_x, err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_ref(), 500, 1e-8, None).unwrap();
+    let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
+    let (res_x, err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_ref(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
     println!("Result x: {:?}", res_x);
     println!("Error x: {:?}", err);
     println!("Iters : {:?}", iters);

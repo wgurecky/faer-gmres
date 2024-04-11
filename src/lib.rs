@@ -81,14 +81,14 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
     T: faer::RealField + Float + faer::SimpleEntity
 {
     fn apply_linop_to_vec(&self, mut target: MatMut<T>) {
-        let eps = T::from(1e-20).unwrap();
+        let eps = T::from(1e-12).unwrap();
         let one_c = T::from(1.0).unwrap();
         let zero_c = T::from(0.0).unwrap();
         for i in 0..target.nrows()
         {
             let v = target.read(i, 0);
             target.write(i, 0,
-                 v * (one_c / (*self.m.as_ref().get(i, i).unwrap_or(&zero_c) + eps) ));
+                 v * (one_c / (*self.m.as_ref().get(i, i).unwrap_or(&one_c) + eps) ));
         }
     }
 }
@@ -171,7 +171,7 @@ fn arnoldi<'a, T>(
     let mut h = Vec::with_capacity(k + 2);
     for i in 0..=k {
         let qci: MatRef<T> = q[i].as_ref();
-        let ht = qv.transpose() * &qci;
+        let ht = qv.transpose() * qci;
         h.push( ht.read(0, 0) );
         qv = qv - (qci * faer::scale(h[i]));
     }
