@@ -33,6 +33,8 @@
 //
 use faer::prelude::*;
 use faer::sparse::*;
+use faer::row::{Row, RowMut, RowRef};
+use faer::col::{Col, ColRef, ColMut};
 use faer::mat;
 use num_traits::Float;
 use std::{error::Error, fmt};
@@ -162,6 +164,8 @@ fn arnoldi<'a, T>(
     linalg::matmul::sparse_dense_matmul(
         qv.as_mut(), a.as_ref(), q_col.as_ref(), None, T::from(1.0).unwrap(), faer::get_global_parallelism());
 
+    // let mut qvc: Col<T> = a * q_col.col(0);
+
     // Apply left preconditioner if supplied
     match m {
         Some(m) => m.apply_linop_to_vec(qv.as_mut()),
@@ -171,9 +175,9 @@ fn arnoldi<'a, T>(
     let mut h = Vec::with_capacity(k + 2);
     for i in 0..=k {
         let qci: MatRef<T> = q[i].as_ref();
-        let ht = qv.transpose() * qci;
-        h.push( ht.read(0, 0) );
-        qv = qv - (qci * faer::scale(h[i]));
+        let ht = qv.transpose().row(0) * qci.col(0);
+        h.push( ht );
+        qv = qv - (qci * faer::scale(ht));
     }
 
     h.push(qv.norm_l2());
