@@ -2,6 +2,7 @@ About
 =====
 
 [![Crates.io](https://img.shields.io/crates/v/faer_gmres)](https://crates.io/crates/faer_gmres)
+![status](https://github.com/wgurecky/faer-gmres/actions/workflows/rust.yml/badge.svg)
 
 GMRES in rust using [faer](https://github.com/sarah-ek/faer-rs).
 

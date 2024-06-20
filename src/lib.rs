@@ -171,8 +171,8 @@ fn arnoldi<'a, T>(
     let mut h = Vec::with_capacity(k + 2);
     for i in 0..=k {
         let qci: MatRef<T> = q[i].as_ref();
-        let ht = qv.transpose() * qci;
-        h.push( ht.read(0, 0) );
+        let ht = qv.transpose().row(0) * qci.col(0);
+        h.push(ht);
         qv = qv - (qci * faer::scale(h[i]));
     }
 
