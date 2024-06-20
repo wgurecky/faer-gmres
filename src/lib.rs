@@ -33,8 +33,6 @@
 //
 use faer::prelude::*;
 use faer::sparse::*;
-use faer::row::{Row, RowMut, RowRef};
-use faer::col::{Col, ColRef, ColMut};
 use faer::mat;
 use num_traits::Float;
 use std::{error::Error, fmt};
