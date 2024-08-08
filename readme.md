@@ -53,7 +53,7 @@ Example use:
 A preconditioner can be supplied:
 
     // continued from above...
-    use faer_gmres::{JacobiPreconLinOp, LinOp};
+    use faer_gmres::{JacobiPreconLinOp};
     let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
     let (res_x, err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_ref(), 10, 1e-8, Some(&jacobi_pre)).unwrap();
 

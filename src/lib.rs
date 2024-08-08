@@ -34,6 +34,9 @@
 use faer::prelude::*;
 use faer::sparse::*;
 use faer::mat;
+use faer::linop::LinOp;
+use faer::Parallelism;
+use faer::dyn_stack::PodStack;
 use reborrow::*;
 use faer::utils::simd::Write;
 use num_traits::Float;
@@ -63,36 +66,78 @@ impl <T> fmt::Display for GmresError<T>
     }
 }
 
-pub trait LinOp<T>
-    where
-    T: faer::RealField + Float
-{
-    fn apply_linop_to_vec(&self, target: MatMut<T>);
-}
+// pub trait LinOp<T>
+//     where
+//     T: faer::RealField + Float
+// {
+//     fn apply_linop_to_vec(&self, target: MatRef<T>) -> Mat<T>;
+// }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct JacobiPreconLinOp<'a, T>
     where
     T: faer::RealField + Float
 {
     m: SparseColMatRef<'a, usize, T>,
 }
+
 impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
     where
     T: faer::RealField + Float + faer::SimpleEntity
 {
-    fn apply_linop_to_vec(&self, mut target: MatMut<T>) {
+    fn apply_req(
+            &self,
+            rhs_ncols: usize,
+            parallelism: Parallelism,
+        ) -> Result<faer::dyn_stack::StackReq, faer::dyn_stack::SizeOverflow> {
+        let _ = parallelism;
+        let _ = rhs_ncols;
+        Ok(faer::dyn_stack::StackReq::empty())
+    }
+
+    fn nrows(&self) -> usize {
+        self.m.nrows()
+    }
+
+    fn ncols(&self) -> usize {
+        self.m.ncols()
+    }
+
+    fn apply(
+        &self,
+        out: MatMut<T>,
+        rhs: MatRef<T>,
+        parallelism: Parallelism,
+        stack: PodStack<'_>,
+        )
+    {
+        // unused
+        _ = parallelism;
+        _ = stack;
+
+        let mut out = out;
         let eps = T::from(1e-12).unwrap();
         let one_c = T::from(1.0).unwrap();
-        let zero_c = T::from(0.0).unwrap();
-        for i in 0..target.nrows()
+        for i in 0..rhs.nrows()
         {
-            let v = target.read(i, 0);
-            target.write(i, 0,
+            let v = rhs.read(i, 0);
+            out.write(i, 0,
                  v * (one_c / (*self.m.as_ref().get(i, i).unwrap_or(&one_c) + eps) ));
         }
     }
+
+    fn conj_apply(
+            &self,
+            out: MatMut<'_, T>,
+            rhs: MatRef<'_, T>,
+            parallelism: Parallelism,
+            stack: PodStack<'_>,
+        ) {
+        // Not implented error!
+        panic!("Not Implemented");
+    }
 }
+
 impl <'a, T> JacobiPreconLinOp <'a, T>
     where
     T: faer::RealField + Float
@@ -103,7 +148,6 @@ impl <'a, T> JacobiPreconLinOp <'a, T>
         }
     }
 }
-
 
 /// Calculate the givens rotation matrix
 fn givens_rotation<T>(v1: T, v2: T) -> (T, T)
@@ -165,7 +209,12 @@ fn arnoldi<'a, T>(
 
     // Apply left preconditioner if supplied
     match m {
-        Some(m) => m.apply_linop_to_vec(qv.as_mut()),
+        Some(m) => {
+            let mut _dummy_podstack: [u8;1] = [0u8;1];
+            let mut lp_out = faer::Mat::zeros(qv.nrows(), qv.ncols());
+            m.apply(lp_out.as_mut(), qv.as_ref(), faer::get_global_parallelism(), PodStack::new(&mut _dummy_podstack));
+            qv = lp_out;
+        },
         _ => {}
     }
 
@@ -197,8 +246,14 @@ pub fn gmres<'a, T>(
 {
     // compute initial residual
     let mut r = b - a * x.as_ref();
+
     match &m {
-        Some(m) => (&m).apply_linop_to_vec(r.as_mut()),
+        Some(m) => {
+            let mut _dummy_podstack: [u8;1] = [0u8;1];
+            let mut lp_out = faer::Mat::zeros(r.nrows(), r.ncols());
+            (&m).apply(lp_out.as_mut(), r.as_ref(), faer::get_global_parallelism(), PodStack::new(&mut _dummy_podstack));
+            r = lp_out;
+        },
         _ => {}
     }
 
