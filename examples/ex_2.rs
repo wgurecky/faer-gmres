@@ -2,6 +2,7 @@ use faer_gmres::{gmres, restarted_gmres, JacobiPreconLinOp};
 use faer::prelude::*;
 use faer::sparse::*;
 use std::fs::read_to_string;
+use std::time::Instant;
 
 
 fn main() {
@@ -9,7 +10,7 @@ fn main() {
     let mut b_rhs = vec![];
 
     // read A matrix from file
-    for line in read_to_string("./examples/data/fidap001.txt").unwrap().lines() {
+    for line in read_to_string("./examples/data/e40r0100.txt").unwrap().lines() {
         let mut tmp_vec_line = vec![];
         let iter = line.split_whitespace();
         for word in iter {
@@ -22,7 +23,7 @@ fn main() {
     }
 
     // read rhs from file
-    for line in read_to_string("./examples/data/fidap001_rhs1.txt").unwrap().lines() {
+    for line in read_to_string("./examples/data/e40r0100_rhs1.txt").unwrap().lines() {
         let mut tmp_vec_line = vec![];
         let iter = line.split_whitespace();
         for word in iter {
@@ -34,23 +35,26 @@ fn main() {
 
     // create sparse mat
     let a_test = SparseColMat::<usize, f64>::try_new_from_triplets(
-        216, 216,
+        17281, 17281,
         &a_triplets).unwrap();
 
     // create rhs
-    let mut rhs = faer::Mat::zeros(216, 1);
+    let mut rhs = faer::Mat::zeros(17281, 1);
     for (i, rhs_val) in b_rhs.into_iter().enumerate() {
         rhs.write(i, 0, rhs_val);
     }
 
     // init guess
-    let mut x0 = faer::Mat::zeros(216, 1);
+    let mut x0 = faer::Mat::zeros(17281, 1);
 
     // solve the system
     let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
-    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
+    let now = Instant::now();
+    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 5000, 1e-6, Some(&jacobi_pre)).unwrap();
+    let dt = now.elapsed();
     println!("Result x: {:?}", x0);
     println!("Error x: {:?}", err);
     println!("Iters : {:?}", iters);
+    println!("Solve time: {:?}  ", dt);
 
 }
