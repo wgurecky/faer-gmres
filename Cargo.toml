@@ -18,3 +18,4 @@ path = 'src/lib.rs'
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
 faer = {version = "0.19.0"}
+reborrow = "*"
