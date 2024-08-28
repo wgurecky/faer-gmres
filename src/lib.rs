@@ -66,7 +66,7 @@ impl <T> fmt::Display for GmresError<T>
     }
 }
 
-#[derive(Clone,Debug)]
+#[derive(Debug)]
 pub struct JacobiPreconLinOp<'a, T>
     where
     T: faer::RealField + Float
