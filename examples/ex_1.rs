@@ -48,7 +48,7 @@ fn main() {
 
     // solve the system
     let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
-    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
+    let (err, iters) = gmres(&a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
     println!("Result x: {:?}", x0);
     println!("Error x: {:?}", err);
     println!("Iters : {:?}", iters);

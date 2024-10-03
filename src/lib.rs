@@ -182,8 +182,8 @@ fn apply_givens_rotation<T>(h: &mut Vec<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, k:
 /// * `m`- An optional preconditioner that is applied to the original system such that
 ///        the new krylov subspace built is [M^{-1}k, M^{-1}Ak, M^{-1}A^2k, ...].
 ///        If None, no preconditioner is applied.
-fn arnoldi<'a, T, Lop: LinOp<T>>(
-    a: &Lop,
+fn arnoldi<'a, T>(
+    a: &dyn LinOp<T>,
     q: &Vec<Mat<T>>,
     k: usize,
     m: Option<&dyn LinOp<T>>
@@ -229,8 +229,8 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
 
 
 /// Generalized minimal residual method
-pub fn gmres<'a, T, Lop: LinOp<T>>(
-    a: Lop,
+pub fn gmres<'a, T, L>(
+    a: &L,
     b: MatRef<T>,
     mut x: MatMut<T>,
     max_iter: usize,
@@ -238,7 +238,8 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     m: Option<&dyn LinOp<T>>
 ) -> Result<(T, usize), GmresError<T>>
     where
-    T: faer::RealField + Float
+    T: faer::RealField + Float,
+    L: LinOp<T>
 {
     // compute initial residual
     // let mut a_x = a * x.as_ref();
@@ -327,8 +328,8 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
 }
 
 /// Restarted Generalized minimal residual method
-pub fn restarted_gmres<'a, T, Lop: LinOp<T>>(
-    a: Lop,
+pub fn restarted_gmres<'a, T, L>(
+    a: &L,
     b: MatRef<T>,
     mut x: MatMut<T>,
     max_iter_inner: usize,
@@ -337,7 +338,8 @@ pub fn restarted_gmres<'a, T, Lop: LinOp<T>>(
     m: Option<&dyn LinOp<T>>
 ) -> Result<(T, usize), GmresError<T>>
     where
-    T: faer::RealField + Float
+    T: faer::RealField + Float,
+    L: LinOp<T>
 {
     let mut error = T::from(1e20).unwrap();
     let mut tot_iters = 0;
@@ -408,7 +410,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 10, 1e-8, None).unwrap();
+        let (err, iters) = gmres(&a_test.as_ref(), b.as_ref(), x0.as_mut(), 10, 1e-8, None).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -449,7 +451,7 @@ mod test_faer_gmres {
         // preconditioner
         let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
 
-        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 10, 1e-8,
+        let (err, iters) = gmres(&a_test.as_ref(), b.as_ref(), x0.as_mut(), 10, 1e-8,
                                         Some(&jacobi_pre)).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
@@ -501,7 +503,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
+        let (err, iters) = gmres(&a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -554,7 +556,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
+        let (err, iters) = gmres(&a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -609,7 +611,7 @@ mod test_faer_gmres {
             ];
 
         let (err, iters) = restarted_gmres(
-            a_test.as_ref(), b.as_ref(), x0.as_mut(), 3, 30,
+            &a_test.as_ref(), b.as_ref(), x0.as_mut(), 3, 30,
             1e-6, None).unwrap();
         println!("Result x: {:?}", x0);
         println!("Error x: {:?}", err);
@@ -634,7 +636,7 @@ mod test_faer_gmres {
         // with preconditioning
         let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
         let (err_precon, iters_precon) = restarted_gmres(
-            a_test.as_ref(), b.as_ref(), x0.as_mut(), 3, 30,
+            &a_test.as_ref(), b.as_ref(), x0.as_mut(), 3, 30,
             1e-6, Some(&jacobi_pre)).unwrap();
         assert!(iters_precon < iters);
         assert!(err_precon < 1e-4);
