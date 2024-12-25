@@ -17,5 +17,5 @@ path = 'src/lib.rs'
 [dependencies]
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
-faer = {version = "0.19.1", features=["unstable"]}
+faer = {version = "0.20.1", features=["unstable"]}
 reborrow = "0.5.5"
