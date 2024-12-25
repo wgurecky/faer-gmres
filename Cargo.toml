@@ -1,7 +1,7 @@
 [package]
 name = "faer_gmres"
 description = "GMRES implementation using faer"
-version = "0.0.5"
+version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/wgurecky/faer-gmres"
 homepage = "https://github.com/wgurecky/faer-gmres"
@@ -17,5 +17,5 @@ path = 'src/lib.rs'
 [dependencies]
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
-faer = {version = "0.19.1", features=["unstable"]}
+faer = {version = "0.20.1", features=["unstable"]}
 reborrow = "0.5.5"

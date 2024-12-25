@@ -101,7 +101,7 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
         out: MatMut<T>,
         rhs: MatRef<T>,
         parallelism: Parallelism,
-        stack: PodStack<'_>,
+        stack: &mut PodStack,
         )
     {
         // unused
@@ -124,7 +124,7 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
             out: MatMut<'_, T>,
             rhs: MatRef<'_, T>,
             parallelism: Parallelism,
-            stack: PodStack<'_>,
+            stack: &mut PodStack,
         ) {
         // Not implented error!
         panic!("Not Implemented");
