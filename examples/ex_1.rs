@@ -18,7 +18,7 @@ fn main() {
         let idx_i = tmp_vec_line[0].parse::<usize>().unwrap()-1;
         let idx_j = tmp_vec_line[1].parse::<usize>().unwrap()-1;
         let val = tmp_vec_line[tmp_vec_line.len()-1].parse::<f64>().unwrap();
-        a_triplets.push((idx_i, idx_j, val));
+        a_triplets.push(Triplet::new(idx_i, idx_j, val));
     }
 
     // read rhs from file
@@ -40,15 +40,15 @@ fn main() {
     // create rhs
     let mut rhs = faer::Mat::zeros(216, 1);
     for (i, rhs_val) in b_rhs.into_iter().enumerate() {
-        rhs.write(i, 0, rhs_val);
+        rhs[(i, 0)] = rhs_val;
     }
 
     // init guess
     let mut x0 = faer::Mat::zeros(216, 1);
 
     // solve the system
-    let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
-    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
+    let jacobi_pre = JacobiPreconLinOp::new(a_test.as_dyn());
+    let (err, iters) = gmres(a_test.as_dyn(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
     println!("Result x: {:?}", x0);
     println!("Error x: {:?}", err);
     println!("Iters : {:?}", iters);
