@@ -34,11 +34,11 @@
 use faer::prelude::*;
 use faer::linalg::solvers::Solve;
 use faer::sparse::*;
+use faer::reborrow::*;
 use faer::mat;
 use faer::matrix_free::LinOp;
 use faer_traits::{ComplexField, RealField};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
-use reborrow::*;
 use num_traits::Float;
 use std::{error::Error, fmt};
 
@@ -450,9 +450,9 @@ mod test_faer_gmres {
             ];
 
         // preconditioner
-        let jacobi_pre = JacobiPreconLinOp::new(a_test.as_dyn());
+        let jacobi_pre = JacobiPreconLinOp::new(a_test.rb());
 
-        let (err, iters) = gmres(a_test.as_dyn(), b.as_ref(), x0.as_mut(), 10, 1e-8,
+        let (err, iters) = gmres(a_test.rb(), b.as_ref(), x0.as_mut(), 10, 1e-8,
                                         Some(&jacobi_pre)).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
@@ -504,7 +504,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.as_dyn(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
+        let (err, iters) = gmres(a_test.rb(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -557,7 +557,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.as_dyn(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
+        let (err, iters) = gmres(a_test.rb(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -612,7 +612,7 @@ mod test_faer_gmres {
             ];
 
         let (err, iters) = restarted_gmres(
-            a_test.as_dyn(), b.as_ref(), x0.as_mut(), 3, 30,
+            a_test.rb(), b.as_ref(), x0.as_mut(), 3, 30,
             1e-6, None).unwrap();
         println!("Result x: {:?}", x0);
         println!("Error x: {:?}", err);
@@ -635,9 +635,9 @@ mod test_faer_gmres {
             ];
 
         // with preconditioning
-        let jacobi_pre = JacobiPreconLinOp::new(a_test.as_dyn());
+        let jacobi_pre = JacobiPreconLinOp::new(a_test.rb());
         let (err_precon, iters_precon) = restarted_gmres(
-            a_test.as_dyn(), b.as_ref(), x0.as_mut(), 3, 30,
+            a_test.rb(), b.as_ref(), x0.as_mut(), 3, 30,
             1e-6, Some(&jacobi_pre)).unwrap();
         assert!(iters_precon < iters);
         assert!(err_precon < 1e-4);

@@ -1,6 +1,7 @@
 use faer_gmres::{gmres, restarted_gmres, JacobiPreconLinOp};
 use faer::prelude::*;
 use faer::sparse::*;
+use faer::reborrow::*;
 use std::fs::read_to_string;
 
 
@@ -47,8 +48,8 @@ fn main() {
     let mut x0 = faer::Mat::zeros(216, 1);
 
     // solve the system
-    let jacobi_pre = JacobiPreconLinOp::new(a_test.as_dyn());
-    let (err, iters) = gmres(a_test.as_dyn(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
+    let jacobi_pre = JacobiPreconLinOp::new(a_test.rb());
+    let (err, iters) = gmres(a_test.rb(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
     println!("Result x: {:?}", x0);
     println!("Error x: {:?}", err);
     println!("Iters : {:?}", iters);
