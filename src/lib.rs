@@ -45,7 +45,7 @@ use std::{error::Error, fmt};
 #[derive(Debug)]
 pub struct GmresError<T>
     where
-    T: Float
+    T: Float + RealField
 {
     error: T,
     tol: T,
@@ -59,7 +59,7 @@ impl <T> Error for GmresError <T>
 
 impl <T> fmt::Display for GmresError<T>
     where
-    T: Float
+    T: Float + RealField
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "GmresError")
@@ -450,9 +450,9 @@ mod test_faer_gmres {
             ];
 
         // preconditioner
-        let jacobi_pre = JacobiPreconLinOp::new(a_test.rb());
+        let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
 
-        let (err, iters) = gmres(a_test.rb(), b.as_ref(), x0.as_mut(), 10, 1e-8,
+        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 10, 1e-8,
                                         Some(&jacobi_pre)).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
@@ -504,7 +504,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.rb(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
+        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -557,7 +557,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.rb(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
+        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -612,7 +612,7 @@ mod test_faer_gmres {
             ];
 
         let (err, iters) = restarted_gmres(
-            a_test.rb(), b.as_ref(), x0.as_mut(), 3, 30,
+            a_test.as_ref(), b.as_ref(), x0.as_mut(), 3, 30,
             1e-6, None).unwrap();
         println!("Result x: {:?}", x0);
         println!("Error x: {:?}", err);
@@ -635,9 +635,9 @@ mod test_faer_gmres {
             ];
 
         // with preconditioning
-        let jacobi_pre = JacobiPreconLinOp::new(a_test.rb());
+        let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
         let (err_precon, iters_precon) = restarted_gmres(
-            a_test.rb(), b.as_ref(), x0.as_mut(), 3, 30,
+            a_test.as_ref(), b.as_ref(), x0.as_mut(), 3, 30,
             1e-6, Some(&jacobi_pre)).unwrap();
         assert!(iters_precon < iters);
         assert!(err_precon < 1e-4);

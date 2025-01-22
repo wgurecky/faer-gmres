@@ -49,9 +49,9 @@ fn main() {
     let mut x0 = faer::Mat::zeros(17281, 1);
 
     // solve the system
-    let jacobi_pre = JacobiPreconLinOp::new(a_test.rb());
+    let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
     let now = Instant::now();
-    let (err, iters) = gmres(a_test.rb(), rhs.as_ref(), x0.as_mut(), 5000, 1e-6, Some(&jacobi_pre)).unwrap();
+    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 5000, 1e-6, Some(&jacobi_pre)).unwrap();
     let dt = now.elapsed();
     println!("Result x: {:?}", x0);
     println!("Error x: {:?}", err);
