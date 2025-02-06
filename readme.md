@@ -16,6 +16,7 @@ Example use:
     use faer_gmres::gmres;
     use faer::prelude::*;
     use faer::sparse::*;
+    use faer::reborrow::*;
     use faer::mat;
 
     // create faer sparse mat from triplets
