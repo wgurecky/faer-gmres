@@ -34,12 +34,17 @@
 use faer::prelude::*;
 use faer::linalg::solvers::Solve;
 use faer::sparse::*;
+use faer::mat::MatRef;
+use faer::col::ColRef;
+use faer::row::RowRef;
 use faer::reborrow::*;
+use rayon::prelude::*;
 use faer::mat;
 use faer::matrix_free::LinOp;
 use faer_traits::{ComplexField, RealField};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use num_traits::Float;
+use std::iter::Sum;
 use std::{error::Error, fmt};
 
 #[derive(Debug)]
@@ -173,6 +178,20 @@ fn apply_givens_rotation<T>(h: &mut Vec<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, k:
     h[k + 1] = T::from(0.).unwrap();
 }
 
+fn par_dotprod<T>(x: RowRef<T>, y: ColRef<T>) -> T
+    where
+    T: RealField + Float + Sum
+{
+    // println!("in x ncols: {:?}", x.ncols());
+    x.par_partition(8).zip(y.par_partition(8))
+        .map(|(a, b)| {
+            // println!("par a ncols: {:?}", a.ncols());
+            // faer::linalg::matmul::dot::inner_prod(a, faer::Conj::No, b, faer::Conj::No)
+            a * b
+        })
+        .sum()
+}
+
 /// Arnoldi decomposition for sparse matrices
 ///
 /// # Arguments
@@ -189,7 +208,7 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
     m: Option<&dyn LinOp<T>>
 ) -> (Vec<T>, Mat<T>)
     where
-    T: Float + RealField
+    T: Float + RealField + Sum
 {
 
     // Krylov vector
@@ -218,6 +237,7 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
     for i in 0..k+1 {
         let qci: MatRef<T> = q[i].as_ref();
         let ht = qv.transpose().row(0) * qci.col(0);
+        // let ht = par_dotprod(qv.transpose().row(0), qci.col(0));
         h.push(ht);
         qv = qv - (qci * faer::Scale(h[i]));
     }
@@ -238,7 +258,7 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     m: Option<&dyn LinOp<T>>
 ) -> Result<(T, usize), GmresError<T>>
     where
-    T: Float + RealField
+    T: Float + RealField + Sum
 {
     // compute initial residual
     // let mut a_x = a * x.as_ref();
@@ -339,7 +359,7 @@ pub fn restarted_gmres<'a, T, Lop: LinOp<T>>(
     m: Option<&dyn LinOp<T>>
 ) -> Result<(T, usize), GmresError<T>>
     where
-    T: Float + RealField
+    T: Float + RealField + Sum
 {
     let mut error = T::from(1e20).unwrap();
     let mut tot_iters = 0;

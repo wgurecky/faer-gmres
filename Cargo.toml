@@ -17,6 +17,7 @@ path = 'src/lib.rs'
 [dependencies]
 assert_approx_eq = "1.1.0"
 num-traits = "0.2.18"
+rayon = "*"
 # faer = {version = "0.21.3", features=["unstable"]}
 faer = {git = "https://github.com/wgurecky/faer-rs", branch = "sparse_as_ref", features=["unstable"]}
 # faer = {path = "../faer-rs/faer/", features=["unstable"]}
