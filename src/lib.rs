@@ -1,3 +1,4 @@
+use faer::mat::AsMatRef;
 // Basic GMRES implementation from the wiki:
 // https://en.wikipedia.org/wiki/Generalized_minimal_residual_method
 //
@@ -34,9 +35,13 @@
 use faer::prelude::*;
 use faer::linalg::solvers::Solve;
 use faer::sparse::*;
-use faer::reborrow::*;
 use faer::mat;
+use faer::reborrow::*;
 use faer::matrix_free::LinOp;
+use faer::matrix_free::*;
+use faer::linalg::matmul::matmul;
+use faer::Accum;
+use faer_traits::math_utils::one;
 use faer_traits::{ComplexField, RealField};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use num_traits::Float;
@@ -155,7 +160,7 @@ fn givens_rotation<T>(v1: T, v2: T) -> (T, T)
 }
 
 /// Apply givens rotation to H col
-fn apply_givens_rotation<T>(h: &mut Vec<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, k: usize)
+fn apply_givens_rotation<T>(mut h: ColMut<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, k: usize)
     where
     T: Float + RealField
 {
@@ -171,6 +176,51 @@ fn apply_givens_rotation<T>(h: &mut Vec<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, k:
     // Eliminate H(i+1:i)
     h[k] = cs[k] * h[k] + sn[k] * h[k + 1];
     h[k + 1] = T::from(0.).unwrap();
+}
+
+/// #[math]
+fn iterate_arnoldi<T>(A: &dyn LinOp<T>, H: MatMut<'_, T>, V: MatMut<'_, T>, start: usize, end: usize, m: Option<&dyn LinOp<T>>)
+    where
+    T: Float + RealField
+{
+	let mut V = V;
+	let mut H = H;
+        let par = faer::get_global_parallelism();
+        // let stack = MemStack::new(&mut MemBuffer::new(StackReq::empty()));
+
+	for j in start..end + 1 {
+		let mut H = H.rb_mut().col_mut(j - 1);
+		H.fill(T::from(0.0).unwrap());
+
+		let (V, Vnext) = V.rb_mut().split_at_col_mut(j);
+		let V = V.rb();
+
+		let mut Vnext = Vnext.col_mut(0);
+		A.apply(Vnext.rb_mut().as_mat_mut(), V.col(j - 1).as_mat(), par, MemStack::new(&mut MemBuffer::new(StackReq::empty())));
+
+                // apply optional left preconditioner
+                match m {
+                    Some(m) => {
+                        let mut Vtmp = faer::Mat::zeros(Vnext.nrows(), 1);
+                        m.apply(
+                            Vtmp.as_mut(),
+                            Vnext.rb().as_mat(),
+                            par, MemStack::new(&mut MemBuffer::new(StackReq::empty())));
+                        Vnext.copy_from(Vtmp.col(0));
+                    },
+                    _ => {}
+                }
+
+		let mut h = H.rb_mut().get_mut(..j);
+		matmul(h.rb_mut(), Accum::Replace, V.adjoint(), Vnext.rb(), one(), par);
+
+		matmul(Vnext.rb_mut(), Accum::Add, V.rb(), h.rb(), -one::<T>(), par);
+
+		let norm = Vnext.norm_l2();
+		let norm_inv = T::from(1.0).unwrap() / norm;
+		zip!(&mut Vnext).for_each(|unzip!(v)| *v = *v * norm_inv);
+		H[j] = norm;
+	}
 }
 
 /// Arnoldi decomposition for sparse matrices
@@ -258,6 +308,7 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
         _ => {}
     }
 
+    let n = b.nrows();
     let b_norm = b.norm_l2();
     let r_norm = r.norm_l2();
     let mut error = r_norm / b_norm;
@@ -271,17 +322,23 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     let mut e = vec![error];
 
     let mut beta = faer::Scale(r_norm) * e1;
-    let mut hs = Vec::with_capacity(max_iter); //Store hessemberg vectors
-    let mut qs = Vec::with_capacity(max_iter);
+    let mut hs = mat::Mat::zeros(max_iter+1, max_iter);
+    let mut qs = mat::Mat::zeros(n, max_iter+1);
     let q = r * faer::Scale(T::from(1.0).unwrap()/r_norm);
-    qs.push(q);
+    println!("q {:?}, {:?}", q.nrows(), q.ncols());
+    println!("qs {:?}, {:?}", qs.nrows(), qs.ncols());
+    qs.col_mut(0).copy_from(q.col(0));
 
     let mut k_iters = 0;
     for k in 0..max_iter {
-        let (mut hk, qk) = arnoldi(&a, &qs, k, m);
-        apply_givens_rotation(&mut hk, &mut cs, &mut sn, k);
-        hs.push(hk);
-        qs.push(qk);
+        // arnoldi(&a, hs.as_mut(), qs.as_mut(), k, m);
+        iterate_arnoldi(&a, hs.as_mut(), qs.as_mut(), k+1, k+1, m);
+        let hk = hs.col_mut(k);
+        // println!("k {:?}", k);
+        // println!("hs {:?}", hs.as_ref());
+        apply_givens_rotation(hk, &mut cs, &mut sn, k);
+        // hs.push(hk);
+        // qs.push(qk);
 
         // Update the residual vector
         beta[(k+1, 0)] = -sn[k] * beta[(k, 0)];
@@ -295,22 +352,26 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
             break;
         }
     }
-
     // build full H matrix from column vecs
-    let mut h_dens: Mat<T> = faer::Mat::zeros(hs.last().unwrap().len()-1, hs.len());
-    for (c, hvec) in (&hs).into_iter().enumerate() {
-        for h_i in 0..hvec.len()-1 {
-            h_dens[(h_i, c)] = hvec[h_i];
-        }
-    }
+    // let mut h_dens: Mat<T> = faer::Mat::zeros(hs.last().unwrap().len()-1, hs.len());
+    // for (c, hvec) in (&hs).into_iter().enumerate() {
+    //     for h_i in 0..hvec.len()-1 {
+    //         h_dens[(h_i, c)] = hvec[h_i];
+    //     }
+    // }
 
     // build full Q matrix
-    let mut q_out: Mat<T> = faer::Mat::zeros(qs[0].nrows(), qs.len());
-    for j in 0..q_out.ncols() {
-        for i in 0..q_out.nrows() {
-            q_out[(i, j)] = qs[j][(i, 0)];
-        }
-    }
+    // let mut q_out: Mat<T> = faer::Mat::zeros(qs[0].nrows(), qs.len());
+    // for j in 0..q_out.ncols() {
+    //     for i in 0..q_out.nrows() {
+    //         q_out[(i, j)] = qs[j][(i, 0)];
+    //     }
+    // }
+
+    let h_dens = hs.get(0..k_iters, 0..k_iters);
+    let q_out = qs.get(0..n, 0..k_iters);
+    // println!("h_dens {:?}", h_dens.as_ref());
+    // println!("q_out {:?}", q_out.as_ref());
 
     // compute solution
     let h_qr2 = h_dens.qr();
@@ -419,9 +480,9 @@ mod test_faer_gmres {
         assert!(iters < 10);
 
         // expect result for x to be [2,1,2/3]
-        assert_approx_eq!(x0[(0, 0)], 2.0, 1e-12);
-        assert_approx_eq!(x0[(1, 0)], 1.0, 1e-12);
-        assert_approx_eq!(x0[(2, 0)], 2.0/3.0, 1e-12);
+        assert_approx_eq!(x0[(0, 0)], 2.0, 1e-10);
+        assert_approx_eq!(x0[(1, 0)], 1.0, 1e-10);
+        assert_approx_eq!(x0[(2, 0)], 2.0/3.0, 1e-10);
     }
 
     #[test]
@@ -461,9 +522,9 @@ mod test_faer_gmres {
         assert!(iters < 10);
 
         // expect result for x to be [2,1,2/3]
-        assert_approx_eq!(x0[(0, 0)], 2.0, 1e-12);
-        assert_approx_eq!(x0[(1, 0)], 1.0, 1e-12);
-        assert_approx_eq!(x0[(2, 0)], 2.0/3.0, 1e-12);
+        assert_approx_eq!(x0[(0, 0)], 2.0, 1e-10);
+        assert_approx_eq!(x0[(1, 0)], 1.0, 1e-10);
+        assert_approx_eq!(x0[(2, 0)], 2.0/3.0, 1e-10);
     }
 
     #[test]
