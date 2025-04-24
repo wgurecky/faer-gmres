@@ -41,7 +41,7 @@ use faer::matrix_free::LinOp;
 use faer::matrix_free::*;
 use faer::linalg::matmul::matmul;
 use faer::Accum;
-use faer_traits::math_utils::one;
+use faer_traits::math_utils::{one, zero};
 use faer_traits::{ComplexField, RealField};
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use num_traits::Float;
@@ -114,8 +114,8 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
         _ = stack;
 
         let mut out = out;
-        let eps = T::from(1e-12).unwrap();
-        let one_c = T::from(1.0).unwrap();
+        let eps = T::from(1e-10).unwrap();
+        let one_c = one::<T>();
         for i in 0..rhs.nrows()
         {
             let v = rhs[(i, 0)];
@@ -178,55 +178,12 @@ fn apply_givens_rotation<T>(mut h: ColMut<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, 
     h[k + 1] = T::from(0.).unwrap();
 }
 
-/// #[math]
-fn iterate_arnoldi<T>(A: &dyn LinOp<T>, H: MatMut<'_, T>, V: MatMut<'_, T>, start: usize, end: usize, m: Option<&dyn LinOp<T>>)
-    where
-    T: Float + RealField
-{
-	let mut V = V;
-	let mut H = H;
-        let par = faer::get_global_parallelism();
-        // let stack = MemStack::new(&mut MemBuffer::new(StackReq::empty()));
-
-	for j in start..end + 1 {
-		let mut H = H.rb_mut().col_mut(j - 1);
-		H.fill(T::from(0.0).unwrap());
-
-		let (V, Vnext) = V.rb_mut().split_at_col_mut(j);
-		let V = V.rb();
-
-		let mut Vnext = Vnext.col_mut(0);
-		A.apply(Vnext.rb_mut().as_mat_mut(), V.col(j - 1).as_mat(), par, MemStack::new(&mut MemBuffer::new(StackReq::empty())));
-
-                // apply optional left preconditioner
-                match m {
-                    Some(m) => {
-                        let mut Vtmp = faer::Mat::zeros(Vnext.nrows(), 1);
-                        m.apply(
-                            Vtmp.as_mut(),
-                            Vnext.rb().as_mat(),
-                            par, MemStack::new(&mut MemBuffer::new(StackReq::empty())));
-                        Vnext.copy_from(Vtmp.col(0));
-                    },
-                    _ => {}
-                }
-
-		let mut h = H.rb_mut().get_mut(..j);
-		matmul(h.rb_mut(), Accum::Replace, V.adjoint(), Vnext.rb(), one(), par);
-
-		matmul(Vnext.rb_mut(), Accum::Add, V.rb(), h.rb(), -one::<T>(), par);
-
-		let norm = Vnext.norm_l2();
-		let norm_inv = T::from(1.0).unwrap() / norm;
-		zip!(&mut Vnext).for_each(|unzip!(v)| *v = *v * norm_inv);
-		H[j] = norm;
-	}
-}
 
 /// Arnoldi decomposition for sparse matrices
 ///
 /// # Arguments
-/// * `a`- The sparse matrix used to build the krylov subspace by forming [k, Ak, A^2k, A^3k...]
+/// * `a`- The sparse matrix used to build the krylov subspace by forming [qk0, A*qk1, A^2*qk2, ...]
+/// * `H`- Hessenberg matrix
 /// * `q`- Vector of all prior krylov column vecs
 /// * `k`- Current iteration
 /// * `m`- An optional preconditioner that is applied to the original system such that
@@ -234,7 +191,7 @@ fn iterate_arnoldi<T>(A: &dyn LinOp<T>, H: MatMut<'_, T>, V: MatMut<'_, T>, star
 ///        If None, no preconditioner is applied.
 fn arnoldi<'a, T, Lop: LinOp<T>>(
     a: &Lop,
-    mut h: MatMut<T>,
+    mut H: MatMut<T>,
     mut q: MatMut<T>,
     k: usize,
     m: Option<&dyn LinOp<T>>
@@ -247,11 +204,7 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
     // Krylov vector
     let q_col: MatRef<T> = q.rb().col(k).as_mat();
 
-    // let mut qv: Mat<f64> = a * q_col;
-    // parallel version of above
     let mut qv: Mat<T> = faer::Mat::zeros(q_col.nrows(), 1);
-    //linalg::matmul::sparse_dense_matmul(
-    //    qv.as_mut(), a.as_ref(), q_col.as_ref(), None, T::from(1.0).unwrap(), faer::get_global_parallelism());
     a.apply(qv.as_mut(), q_col.as_ref(), par,
             MemStack::new(&mut MemBuffer::new(StackReq::empty())));
 
@@ -266,21 +219,21 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
         _ => {}
     }
 
+    let mut h = H.rb_mut().col_mut(k);
     for i in 0..k+1 {
-        let qci: MatRef<T> = q.rb().col(i).as_mat();
-        let ht = qv.transpose().row(0) * qci.col(0);
-        h[(i, k)] = ht;
-        qv = qv - (qci * faer::Scale(ht));
+        let r = qv.col(0).transpose() * q.rb().col(i);
+        h[i] = r;
+        zip!(qv.col_mut(0), q.rb().col(i)).for_each(|unzip!(mut y, x)| *y = *y - r * *x);
     }
 
     let norm_v = qv.norm_l2();
     let breakdown_tol = T::from(1.0e-12).unwrap();
     let breakdown_flag: bool = norm_v < breakdown_tol;
 
-    h[(k+1, k)] = norm_v;
+    h[k+1] = norm_v;
 
     if !breakdown_flag {
-        qv = qv * faer::Scale(T::from(1.).unwrap()/norm_v);
+        qv = qv * faer::Scale(one::<T>()/norm_v);
         q.col_mut(k+1).copy_from(qv.col(0));
     }
     breakdown_flag
@@ -341,13 +294,14 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     let mut k_iters = 0;
     for k in 0..max_iter {
         let _brkdwn = arnoldi(&a, hs.as_mut(), qs.as_mut(), k, m);
-        // iterate_arnoldi(&a, hs.as_mut(), qs.as_mut(), k+1, k+1, m);
         apply_givens_rotation(hs.col_mut(k), &mut cs, &mut sn, k);
 
         // Update the residual vector
         beta[(k+1, 0)] = -sn[k] * beta[(k, 0)];
         beta[(k, 0)] = cs[k] * beta[(k, 0)];
         error = (beta[(k + 1, 0)]).abs() / b_norm;
+
+        println!("i: {:?}, err: {:?}", k, error);
 
         // Save the error
         e.push(error);
