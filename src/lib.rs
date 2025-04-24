@@ -1,3 +1,4 @@
+use faer::linalg::temp_mat_scratch;
 use faer::mat::AsMatRef;
 // Basic GMRES implementation from the wiki:
 // https://en.wikipedia.org/wiki/Generalized_minimal_residual_method
@@ -114,7 +115,7 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
         _ = stack;
 
         let mut out = out;
-        let eps = T::from(1e-10).unwrap();
+        let eps = T::from(1e-12).unwrap();
         let one_c = one::<T>();
         for i in 0..rhs.nrows()
         {
@@ -194,26 +195,24 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
     mut H: MatMut<T>,
     mut q: MatMut<T>,
     k: usize,
-    m: Option<&dyn LinOp<T>>
+    m: Option<&dyn LinOp<T>>,
+    par: Par,
+    stack: &mut MemStack
     ) -> bool
     where
     T: Float + RealField
 {
-    let par = faer::get_global_parallelism();
-
     // Krylov vector
     let q_col: MatRef<T> = q.rb().col(k).as_mat();
 
     let mut qv: Mat<T> = faer::Mat::zeros(q_col.nrows(), 1);
-    a.apply(qv.as_mut(), q_col.as_ref(), par,
-            MemStack::new(&mut MemBuffer::new(StackReq::empty())));
+    a.apply(qv.as_mut(), q_col.as_ref(), par, stack);
 
     // Apply left preconditioner if supplied
     match m {
         Some(m) => {
             let mut lp_out = faer::Mat::zeros(qv.nrows(), qv.ncols());
-            m.apply(lp_out.as_mut(), qv.as_ref(), par,
-                    MemStack::new(&mut MemBuffer::new(StackReq::empty())));
+            m.apply(lp_out.as_mut(), qv.as_ref(), par, stack);
             qv = lp_out;
         },
         _ => {}
@@ -252,9 +251,19 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     where
     T: Float + RealField
 {
+    let par = faer::get_global_parallelism();
+    let n = b.nrows();
+    let H_scratch = temp_mat_scratch::<T>(max_iter+1, max_iter);
+    let Q_scratch = temp_mat_scratch::<T>(n, max_iter+1);
+    let a_scratch = a.apply_scratch(1, par).or(StackReq::new::<bool>(max_iter));
+    let stackreq = StackReq::all_of(&[H_scratch, Q_scratch, a_scratch]);
+    let mut buff = MemBuffer::new(stackreq);
+    let stack = MemStack::new(&mut buff);
+
+    let mut hs = mat::Mat::zeros(max_iter+1, max_iter);
+    let mut qs = mat::Mat::zeros(n, max_iter+1);
+
     // compute initial residual
-    // let mut a_x = a * x.as_ref();
-    // let mut _dummy_podstack: [u8;1] = [0u8;1];
     let mut a_x = faer::Mat::zeros(b.nrows(), b.ncols());
     a.apply(a_x.as_mut(), x.as_ref(), faer::get_global_parallelism(),
             MemStack::new(&mut MemBuffer::new(StackReq::empty())));
@@ -270,7 +279,6 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
         _ => {}
     }
 
-    let n = b.nrows();
     let b_norm = b.norm_l2();
     let r_norm = r.norm_l2();
     let mut error = r_norm / b_norm;
@@ -284,24 +292,18 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     let mut e = vec![error];
 
     let mut beta = faer::Scale(r_norm) * e1;
-    let mut hs = mat::Mat::zeros(max_iter+1, max_iter);
-    let mut qs = mat::Mat::zeros(n, max_iter+1);
     let q = r * faer::Scale(T::from(1.0).unwrap()/r_norm);
-    // println!("q {:?}, {:?}", q.nrows(), q.ncols());
-    // println!("qs {:?}, {:?}", qs.nrows(), qs.ncols());
     qs.col_mut(0).copy_from(q.col(0));
 
     let mut k_iters = 0;
     for k in 0..max_iter {
-        let _brkdwn = arnoldi(&a, hs.as_mut(), qs.as_mut(), k, m);
+        let _brkdwn = arnoldi(&a, hs.as_mut(), qs.as_mut(), k, m, par, stack);
         apply_givens_rotation(hs.col_mut(k), &mut cs, &mut sn, k);
 
         // Update the residual vector
         beta[(k+1, 0)] = -sn[k] * beta[(k, 0)];
         beta[(k, 0)] = cs[k] * beta[(k, 0)];
         error = (beta[(k + 1, 0)]).abs() / b_norm;
-
-        println!("i: {:?}, err: {:?}", k, error);
 
         // Save the error
         e.push(error);
@@ -310,32 +312,16 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
             break;
         }
     }
-    // build full H matrix from column vecs
-    // let mut h_dens: Mat<T> = faer::Mat::zeros(hs.last().unwrap().len()-1, hs.len());
-    // for (c, hvec) in (&hs).into_iter().enumerate() {
-    //     for h_i in 0..hvec.len()-1 {
-    //         h_dens[(h_i, c)] = hvec[h_i];
-    //     }
-    // }
 
-    // build full Q matrix
-    // let mut q_out: Mat<T> = faer::Mat::zeros(qs[0].nrows(), qs.len());
-    // for j in 0..q_out.ncols() {
-    //     for i in 0..q_out.nrows() {
-    //         q_out[(i, j)] = qs[j][(i, 0)];
-    //     }
-    // }
-
-    let h_dens = hs.get(0..k_iters, 0..k_iters);
-    let q_out = qs.get(0..n, 0..k_iters);
-    // println!("h_dens {:?}", h_dens.as_ref());
-    // println!("q_out {:?}", q_out.as_ref());
+    // trim
+    let H = hs.get(0..k_iters, 0..k_iters);
+    let V = qs.get(0..n, 0..k_iters);
 
     // compute solution
-    let h_qr2 = h_dens.qr();
-    let y2 = h_qr2.solve(&beta.get(0..k_iters, 0..1));
+    let h_qr = H.col_piv_qr();
+    let y2 = h_qr.solve(&beta.get(0..k_iters, 0..1));
 
-    x += q_out.get(0..q_out.nrows(), 0..y2.nrows()) * y2;
+    x += V.get(0..V.nrows(), 0..y2.nrows()) * y2;
     if error <= threshold {
         Ok((error, k_iters))
     } else {

@@ -21,9 +21,9 @@ Example use:
 
     // create faer sparse mat from triplets
     let a_test_triplets = vec![
-        (0, 0, 1.0),
-        (1, 1, 2.0),
-        (2, 2, 3.0),
+        Triplet::new(0, 0, 1.0),
+        Triplet::new(1, 1, 2.0),
+        Triplet::new(2, 2, 3.0),
         ];
     let a_test = SparseColMat::<usize, f64>::try_new_from_triplets(
         3, 3,
