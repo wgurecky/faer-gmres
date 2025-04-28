@@ -1,5 +1,3 @@
-use faer::linalg::temp_mat_scratch;
-use faer::mat::AsMatRef;
 // Basic GMRES implementation from the wiki:
 // https://en.wikipedia.org/wiki/Generalized_minimal_residual_method
 //
@@ -35,15 +33,12 @@ use faer::mat::AsMatRef;
 //
 use faer::prelude::*;
 use faer::linalg::solvers::Solve;
+use faer::linalg::temp_mat_scratch;
 use faer::sparse::*;
-use faer::mat;
 use faer::reborrow::*;
 use faer::matrix_free::LinOp;
-use faer::matrix_free::*;
-use faer::linalg::matmul::matmul;
-use faer::Accum;
 use faer_traits::math_utils::{one, zero};
-use faer_traits::{ComplexField, RealField};
+use faer_traits::RealField;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use num_traits::Float;
 use std::{error::Error, fmt};
@@ -176,7 +171,7 @@ fn apply_givens_rotation<T>(mut h: ColMut<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, 
 
     // Eliminate H(i+1:i)
     h[k] = cs[k] * h[k] + sn[k] * h[k + 1];
-    h[k + 1] = T::from(0.).unwrap();
+    h[k + 1] = zero();
 }
 
 
@@ -205,13 +200,13 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
     // Krylov vector
     let q_col: MatRef<T> = q.rb().col(k).as_mat();
 
-    let mut qv: Mat<T> = faer::Mat::zeros(q_col.nrows(), 1);
+    let mut qv: Mat<T> = Mat::zeros(q_col.nrows(), 1);
     a.apply(qv.as_mut(), q_col.as_ref(), par, stack);
 
     // Apply left preconditioner if supplied
     match m {
         Some(m) => {
-            let mut lp_out = faer::Mat::zeros(qv.nrows(), qv.ncols());
+            let mut lp_out = Mat::zeros(qv.nrows(), qv.ncols());
             m.apply(lp_out.as_mut(), qv.as_ref(), par, stack);
             qv = lp_out;
         },
@@ -253,27 +248,25 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
 {
     let par = faer::get_global_parallelism();
     let n = b.nrows();
-    let H_scratch = temp_mat_scratch::<T>(max_iter+1, max_iter);
-    let Q_scratch = temp_mat_scratch::<T>(n, max_iter+1);
+    let h_scratch = temp_mat_scratch::<T>(max_iter+1, max_iter);
+    let q_scratch = temp_mat_scratch::<T>(n, max_iter+1);
     let a_scratch = a.apply_scratch(1, par).or(StackReq::new::<bool>(max_iter));
-    let stackreq = StackReq::all_of(&[H_scratch, Q_scratch, a_scratch]);
+    let stackreq = StackReq::all_of(&[h_scratch, q_scratch, a_scratch]);
     let mut buff = MemBuffer::new(stackreq);
     let stack = MemStack::new(&mut buff);
 
-    let mut hs = mat::Mat::zeros(max_iter+1, max_iter);
-    let mut qs = mat::Mat::zeros(n, max_iter+1);
+    let mut hs = Mat::zeros(max_iter+1, max_iter);
+    let mut qs = Mat::zeros(n, max_iter+1);
 
     // compute initial residual
-    let mut a_x = faer::Mat::zeros(b.nrows(), b.ncols());
-    a.apply(a_x.as_mut(), x.as_ref(), faer::get_global_parallelism(),
-            MemStack::new(&mut MemBuffer::new(StackReq::empty())));
+    let mut a_x = Mat::zeros(b.nrows(), b.ncols());
+    a.apply(a_x.as_mut(), x.as_ref(), par, stack);
     let mut r = b - a_x;
 
     match &m {
         Some(m) => {
-            let mut lp_out = faer::Mat::zeros(r.nrows(), r.ncols());
-            (&m).apply(lp_out.as_mut(), r.as_ref(), faer::get_global_parallelism(),
-                       MemStack::new(&mut MemBuffer::new(StackReq::empty())));
+            let mut lp_out = Mat::zeros(r.nrows(), r.ncols());
+            (&m).apply(lp_out.as_mut(), r.as_ref(), par, stack);
             r = lp_out;
         },
         _ => {}
@@ -284,15 +277,15 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     let mut error = r_norm / b_norm;
 
     // Initialize 1D vectors
-    let mut sn: Vec<T> = vec![T::from(0.).unwrap(); max_iter];
-    let mut cs: Vec<T> = vec![T::from(0.).unwrap(); max_iter];
+    let mut sn: Vec<T> = vec![zero(); max_iter];
+    let mut cs: Vec<T> = vec![zero(); max_iter];
     // let mut e1 = vec![0.; max_iter + 1];
-    let mut e1: Mat<T> = mat::Mat::zeros(max_iter+1, 1);
-    e1[(0, 0)] = T::from(1.).unwrap();
+    let mut e1: Mat<T> = Mat::zeros(max_iter+1, 1);
+    e1[(0, 0)] = one::<T>();
     let mut e = vec![error];
 
     let mut beta = faer::Scale(r_norm) * e1;
-    let q = r * faer::Scale(T::from(1.0).unwrap()/r_norm);
+    let q = r * faer::Scale(one::<T>()/r_norm);
     qs.col_mut(0).copy_from(q.col(0));
 
     let mut k_iters = 0;
