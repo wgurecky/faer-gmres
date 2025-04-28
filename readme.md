@@ -6,7 +6,7 @@ About
 
 GMRES in rust using [faer](https://github.com/sarah-ek/faer-rs).
 
-Solves linear systems of the form: Ax=b, where A is sparse.  Depends on faer for sparse matrix implementation.
+Solves linear systems of the form: Ax=b, where A is sparse.  A can be a faer [LinOp](https://docs.rs/faer/latest/faer/matrix_free/trait.LinOp.html) for matrix-free computation.
 
 Use
 ===
