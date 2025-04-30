@@ -79,6 +79,13 @@ TODO
 - Benchmarks
 - Performance improvements
 
+Notes
+=====
+
+For best performance, it is recommended to add the following to your cargo `.config`:
+
+    [target.x86_64-unknown-linux-gnu]
+    rustflags=["-Ctarget-cpu=native"]
 
 References and Credits
 =======================
