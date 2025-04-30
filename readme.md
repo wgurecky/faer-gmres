@@ -6,7 +6,7 @@ About
 
 GMRES in rust using [faer](https://github.com/sarah-ek/faer-rs).
 
-Solves linear systems of the form: Ax=b, where A is sparse.  Depends on faer for sparse matrix implementation.
+Solves linear systems of the form: $`Ax=b`$, where $`A`$ is sparse, and $`A`$ implements the faer [LinOp](https://docs.rs/faer/latest/faer/matrix_free/trait.LinOp.html) trait for matrix-free computation.
 
 Use
 ===
@@ -79,6 +79,13 @@ TODO
 - Benchmarks
 - Performance improvements
 
+Notes
+=====
+
+For best performance, it is recommended to add the following to your cargo `.config`:
+
+    [target.x86_64-unknown-linux-gnu]
+    rustflags=["-Ctarget-cpu=native"]
 
 References and Credits
 =======================
