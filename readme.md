@@ -44,7 +44,7 @@ Example use:
 
     let par = faer::get_global_parallelism();
     // the None arg means do not apply left preconditioning
-    let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x.as_mut(), 10, 1e-8, None, par).unwrap();
+    let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x.as_mut(), 10, 1e-8, 0.0, None, par).unwrap();
     println!("Result x: {:?}", x);
     println!("Error x: {:?}", err);
     println!("Iters : {:?}", iters);
@@ -56,7 +56,7 @@ A left preconditioner can be supplied. It must implement the faer [Precond](http
     // continued from above...
     use faer_gmres::JacobiPrecond;
     let jacobi_pre = JacobiPrecond::new(a_test.as_ref());
-    let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x.as_mut(), 10, 1e-8, Some(&jacobi_pre), par).unwrap();
+    let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x.as_mut(), 10, 1e-8, 0.0, Some(&jacobi_pre), par).unwrap();
 
 See the [faer-precond](https://crates.io/crates/faer-precond) crate for additional preconditioners.
 
@@ -68,7 +68,7 @@ A restarted GMRES routine is provided:
     let max_inner = 30;
     let max_outer = 50;
     let (err, iters) = restarted_gmres(
-        a_test.as_ref(), b.as_ref(), x.as_mut(), max_inner, max_outer, 1e-8, None, par).unwrap();
+        a_test.as_ref(), b.as_ref(), x.as_mut(), max_inner, max_outer, 1e-8, 0.0, None, par).unwrap();
 
 This will repeatedly call the inner GMRES routine, using the previous outer iteration's solution as the inital guess for the next outer solve.  The current implementation of restarted GMRES in this package can reduce the memory requirements needed, but slow convergence.
 

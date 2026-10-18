@@ -50,9 +50,8 @@ fn main() {
 
     // solve the system
     let par = faer::get_global_parallelism();
-    let jacobi_pre = JacobiPrecond::new(a_test.as_ref());
     let now = Instant::now();
-    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 3000, 1e-6, Some(&jacobi_pre), par).unwrap();
+    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 3000, 1e-6, 0.0, None, par).unwrap();
     let dt = now.elapsed();
     println!("Result x: {:?}", x0);
     println!("Error x: {:?}", err);
