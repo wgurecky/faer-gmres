@@ -34,9 +34,7 @@
 use faer::prelude::*;
 use faer::linalg::solvers::Solve;
 use faer::linalg::temp_mat_scratch;
-use faer::sparse::*;
-use faer::reborrow::*;
-use faer::matrix_free::LinOp;
+use faer::matrix_free::{LinOp, Precond};
 use faer_traits::math_utils::{one, zero};
 use faer_traits::RealField;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
@@ -67,15 +65,17 @@ impl <T> fmt::Display for GmresError<T>
     }
 }
 
+/// Jacobi (diagonal) preconditioner. Stores the precomputed inverse of the
+/// diagonal of the system matrix.
 #[derive(Clone,Debug)]
-pub struct JacobiPreconLinOp<'a, T>
+pub struct JacobiPrecond<T>
     where
     T: Float + RealField
 {
-    m: SparseColMatRef<'a, usize, T>,
+    inv_diag: Vec<T>,
 }
 
-impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
+impl <T> LinOp<T> for JacobiPrecond<T>
     where
     T: Float + RealField
 {
@@ -90,11 +90,11 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
     }
 
     fn nrows(&self) -> usize {
-        self.m.nrows()
+        self.inv_diag.len()
     }
 
     fn ncols(&self) -> usize {
-        self.m.ncols()
+        self.inv_diag.len()
     }
 
     fn apply(
@@ -110,13 +110,10 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
         _ = stack;
 
         let mut out = out;
-        let eps = T::from(1e-12).unwrap();
-        let one_c = one::<T>();
-        for i in 0..rhs.nrows()
-        {
-            let v = rhs[(i, 0)];
-            out[(i, 0)] =
-                 v * (one_c / (*self.m.get(i, i).unwrap_or(&one_c) + eps) );
+        for j in 0..rhs.ncols() {
+            for i in 0..rhs.nrows() {
+                out[(i, j)] = rhs[(i, j)] * self.inv_diag[i];
+            }
         }
     }
 
@@ -127,19 +124,66 @@ impl <'a, T> LinOp<T> for JacobiPreconLinOp<'a, T>
             parallelism: Par,
             stack: &mut MemStack,
         ) {
-        // Not implented error!
-        panic!("Not Implemented");
+        // T is real, so the conjugate is the operator itself
+        self.apply(out, rhs, parallelism, stack);
     }
 }
 
-impl <'a, T> JacobiPreconLinOp <'a, T>
+impl <T> Precond<T> for JacobiPrecond<T>
     where
     T: Float + RealField
 {
-    pub fn new(m_in: SparseColMatRef<'a, usize, T>) -> Self {
-        Self {
-            m: m_in,
+    fn apply_in_place_scratch(&self, rhs_ncols: usize, parallelism: Par) -> StackReq {
+        _ = rhs_ncols;
+        _ = parallelism;
+        StackReq::empty()
+    }
+
+    fn apply_in_place(
+        &self,
+        rhs: MatMut<'_, T>,
+        parallelism: Par,
+        stack: &mut MemStack,
+        )
+    {
+        // unused
+        _ = parallelism;
+        _ = stack;
+
+        let mut rhs = rhs;
+        for j in 0..rhs.ncols() {
+            for i in 0..rhs.nrows() {
+                rhs[(i, j)] = rhs[(i, j)] * self.inv_diag[i];
+            }
         }
+    }
+
+    fn conj_apply_in_place(
+        &self,
+        rhs: MatMut<'_, T>,
+        parallelism: Par,
+        stack: &mut MemStack,
+        )
+    {
+        // T is real, so the conjugate is the operator itself
+        self.apply_in_place(rhs, parallelism, stack);
+    }
+}
+
+impl <T> JacobiPrecond<T>
+    where
+    T: Float + RealField
+{
+    /// Build the preconditioner from the diagonal of the square matrix `m_in`.
+    /// Missing diagonal entries are treated as 1.
+    pub fn new(m_in: SparseColMatRef<'_, usize, T>) -> Self {
+        assert_eq!(m_in.nrows(), m_in.ncols(), "Jacobi preconditioner requires a square matrix");
+        let eps = T::from(1e-12).unwrap();
+        let one_c = one::<T>();
+        let inv_diag = (0..m_in.nrows())
+            .map(|i| one_c / (*m_in.get(i, i).unwrap_or(&one_c) + eps))
+            .collect();
+        Self { inv_diag }
     }
 }
 
@@ -190,7 +234,7 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
     mut H: MatMut<T>,
     mut q: MatMut<T>,
     k: usize,
-    m: Option<&dyn LinOp<T>>,
+    m: Option<&dyn Precond<T>>,
     par: Par,
     stack: &mut MemStack
     ) -> bool
@@ -203,14 +247,9 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
     let mut qv: Mat<T> = Mat::zeros(q_col.nrows(), 1);
     a.apply(qv.as_mut(), q_col.as_ref(), par, stack);
 
-    // Apply left preconditioner if supplied
-    match m {
-        Some(m) => {
-            let mut lp_out = Mat::zeros(qv.nrows(), qv.ncols());
-            m.apply(lp_out.as_mut(), qv.as_ref(), par, stack);
-            qv = lp_out;
-        },
-        _ => {}
+    // Apply left preconditioner in place if supplied
+    if let Some(m) = m {
+        m.apply_in_place(qv.as_mut(), par, stack);
     }
 
     let mut h = H.rb_mut().col_mut(k);
@@ -241,16 +280,19 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     mut x: MatMut<T>,
     max_iter: usize,
     threshold: T,
-    m: Option<&dyn LinOp<T>>
+    m: Option<&dyn Precond<T>>,
+    par: Par
 ) -> Result<(T, usize), GmresError<T>>
     where
     T: Float + RealField
 {
-    let par = faer::get_global_parallelism();
     let n = b.nrows();
     let h_scratch = temp_mat_scratch::<T>(max_iter+1, max_iter);
     let q_scratch = temp_mat_scratch::<T>(n, max_iter+1);
-    let a_scratch = a.apply_scratch(1, par).or(StackReq::new::<bool>(max_iter));
+    let m_scratch = m.map_or(StackReq::empty(), |m| m.apply_in_place_scratch(1, par));
+    let a_scratch = a.apply_scratch(1, par)
+        .or(m_scratch)
+        .or(StackReq::new::<bool>(max_iter));
     let stackreq = StackReq::all_of(&[h_scratch, q_scratch, a_scratch]);
     let mut buff = MemBuffer::new(stackreq);
     let stack = MemStack::new(&mut buff);
@@ -263,13 +305,9 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     a.apply(a_x.as_mut(), x.as_ref(), par, stack);
     let mut r = b - a_x;
 
-    match &m {
-        Some(m) => {
-            let mut lp_out = Mat::zeros(r.nrows(), r.ncols());
-            (&m).apply(lp_out.as_mut(), r.as_ref(), par, stack);
-            r = lp_out;
-        },
-        _ => {}
+    // apply left preconditioner in place if supplied
+    if let Some(m) = m {
+        m.apply_in_place(r.as_mut(), par, stack);
     }
 
     let b_norm = b.norm_l2();
@@ -334,7 +372,8 @@ pub fn restarted_gmres<'a, T, Lop: LinOp<T>>(
     max_iter_inner: usize,
     max_iter_outer: usize,
     threshold: T,
-    m: Option<&dyn LinOp<T>>
+    m: Option<&dyn Precond<T>>,
+    par: Par
 ) -> Result<(T, usize), GmresError<T>>
     where
     T: Float + RealField
@@ -345,7 +384,7 @@ pub fn restarted_gmres<'a, T, Lop: LinOp<T>>(
     for _ko in 0..max_iter_outer {
         let res = gmres(
             &a, b.as_ref(), x.rb_mut(),
-            max_iter_inner, threshold, m);
+            max_iter_inner, threshold, m, par);
         match res {
             // done
             Ok(res) => {
@@ -379,7 +418,7 @@ pub fn restarted_gmres<'a, T, Lop: LinOp<T>>(
 #[cfg(test)]
 mod test_faer_gmres {
     use assert_approx_eq::assert_approx_eq;
-    use faer::sparse::SparseColMat;
+    use faer::sparse::{SparseColMat, Triplet};
 
     // bring everything from above (parent) module into scope
     use super::*;
@@ -409,7 +448,8 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(&a_test, b.as_ref(), x0.as_mut(), 10, 1e-8, None).unwrap();
+        let par = faer::get_global_parallelism();
+        let (err, iters) = gmres(&a_test, b.as_ref(), x0.as_mut(), 10, 1e-8, None, par).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -448,10 +488,10 @@ mod test_faer_gmres {
             ];
 
         // preconditioner
-        let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
+        let jacobi_pre = JacobiPrecond::new(a_test.as_ref());
 
         let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 10, 1e-8,
-                                        Some(&jacobi_pre)).unwrap();
+            Some(&jacobi_pre), Par::Seq).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -502,7 +542,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
+        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None, Par::Seq).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -555,7 +595,7 @@ mod test_faer_gmres {
             [0.0],
             ];
 
-        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None).unwrap();
+        let (err, iters) = gmres(a_test.as_ref(), b.as_ref(), x0.as_mut(), 100, 1e-6, None, Par::Seq).unwrap();
         println!("Result x: {:?}", x0.as_ref());
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -611,7 +651,7 @@ mod test_faer_gmres {
 
         let (err, iters) = restarted_gmres(
             a_test.as_ref(), b.as_ref(), x0.as_mut(), 3, 30,
-            1e-6, None).unwrap();
+            1e-6, None, Par::Seq).unwrap();
         println!("Result x: {:?}", x0);
         println!("Error x: {:?}", err);
         println!("Iters : {:?}", iters);
@@ -633,10 +673,10 @@ mod test_faer_gmres {
             ];
 
         // with preconditioning
-        let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
+        let jacobi_pre = JacobiPrecond::new(a_test.as_ref());
         let (err_precon, iters_precon) = restarted_gmres(
             a_test.as_ref(), b.as_ref(), x0.as_mut(), 3, 30,
-            1e-6, Some(&jacobi_pre)).unwrap();
+            1e-6, Some(&jacobi_pre), Par::Seq).unwrap();
         assert!(iters_precon < iters);
         assert!(err_precon < 1e-4);
         assert_approx_eq!(x0[(0, 0)], 0.037919, 1e-4);
@@ -644,6 +684,41 @@ mod test_faer_gmres {
         assert_approx_eq!(x0[(2, 0)], -0.657575, 1e-4);
         assert_approx_eq!(x0[(3, 0)], -0.181680, 1e-4);
         assert_approx_eq!(x0[(4, 0)], 0.292447, 1e-4);
+    }
+
+    #[test]
+    fn test_jacobi_apply_in_place() {
+        let a_test_triplets = vec![
+            Triplet::new(0, 0, 1.0),
+            Triplet::new(1, 1, 2.0),
+            Triplet::new(2, 2, 4.0),
+            Triplet::new(0, 2, 5.0),
+            ];
+        let a_test = SparseColMat::<usize, f64>::try_new_from_triplets(
+            3, 3,
+            &a_test_triplets).unwrap();
+        let pre = JacobiPrecond::new(a_test.as_ref());
+
+        let rhs = faer::mat![
+            [1.0, 2.0],
+            [4.0, 8.0],
+            [8.0, 16.0],
+            ];
+        let par = Par::Seq;
+        let mut out = Mat::<f64>::zeros(3, 2);
+        pre.apply(out.as_mut(), rhs.as_ref(), par, MemStack::new(&mut []));
+
+        let mut in_place = rhs.clone();
+        pre.apply_in_place(in_place.as_mut(), par, MemStack::new(&mut []));
+
+        for j in 0..2 {
+            for i in 0..3 {
+                assert_approx_eq!(in_place[(i, j)], out[(i, j)], 1e-12);
+            }
+        }
+        assert_approx_eq!(in_place[(0, 0)], 1.0, 1e-9);
+        assert_approx_eq!(in_place[(1, 1)], 4.0, 1e-9);
+        assert_approx_eq!(in_place[(2, 1)], 4.0, 1e-9);
     }
 
     #[test]

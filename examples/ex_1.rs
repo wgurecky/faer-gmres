@@ -1,4 +1,4 @@
-use faer_gmres::{gmres, restarted_gmres, JacobiPreconLinOp};
+use faer_gmres::{gmres, restarted_gmres, JacobiPrecond};
 use faer::prelude::*;
 use faer::sparse::*;
 use faer::reborrow::*;
@@ -48,8 +48,9 @@ fn main() {
     let mut x0 = faer::Mat::zeros(216, 1);
 
     // solve the system
-    let jacobi_pre = JacobiPreconLinOp::new(a_test.as_ref());
-    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre)).unwrap();
+    let par = faer::get_global_parallelism();
+    let jacobi_pre = JacobiPrecond::new(a_test.as_ref());
+    let (err, iters) = gmres(a_test.as_ref(), rhs.as_ref(), x0.as_mut(), 500, 1e-8, Some(&jacobi_pre), par).unwrap();
     println!("Result x: {:?}", x0);
     println!("Error x: {:?}", err);
     println!("Iters : {:?}", iters);
