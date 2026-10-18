@@ -32,8 +32,9 @@
 // https://crates.io/crates/gmres
 //
 use faer::prelude::*;
-use faer::linalg::solvers::Solve;
-use faer::linalg::temp_mat_scratch;
+use faer::linalg::triangular_solve::solve_upper_triangular_in_place;
+use faer::linalg::matmul::matmul;
+use faer::Accum;
 use faer::matrix_free::{LinOp, Precond};
 use faer_traits::math_utils::{one, zero};
 use faer_traits::RealField;
@@ -192,7 +193,7 @@ fn givens_rotation<T>(v1: T, v2: T) -> (T, T)
     where
     T: Float + RealField
 {
-    let t = (v1.powi(2) + v2.powi(2)).powf(T::from(0.5).unwrap());
+    let t = v1.hypot(v2);
     let cs = v1 / t;
     let sn = v2 / t;
 
@@ -200,7 +201,7 @@ fn givens_rotation<T>(v1: T, v2: T) -> (T, T)
 }
 
 /// Apply givens rotation to H col
-fn apply_givens_rotation<T>(mut h: ColMut<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, k: usize)
+fn apply_givens_rotation<T>(mut h: ColMut<T>, cs: &mut [T], sn: &mut [T], k: usize)
     where
     T: Float + RealField
 {
@@ -232,7 +233,7 @@ fn apply_givens_rotation<T>(mut h: ColMut<T>, cs: &mut Vec<T>, sn: &mut Vec<T>, 
 fn arnoldi<'a, T, Lop: LinOp<T>>(
     a: &Lop,
     mut H: MatMut<T>,
-    mut q: MatMut<T>,
+    q: MatMut<T>,
     k: usize,
     m: Option<&dyn Precond<T>>,
     par: Par,
@@ -241,33 +242,34 @@ fn arnoldi<'a, T, Lop: LinOp<T>>(
     where
     T: Float + RealField
 {
-    // Krylov vector
-    let q_col: MatRef<T> = q.rb().col(k).as_mat();
+    // Split the basis so the new Krylov vector (column k+1) is built in place
+    // from the prior vectors (columns 0..=k)
+    let (prev, mut next) = q.split_at_col_mut(k+1);
+    let mut qv = next.rb_mut().col_mut(0);
 
-    let mut qv: Mat<T> = Mat::zeros(q_col.nrows(), 1);
-    a.apply(qv.as_mut(), q_col.as_ref(), par, stack);
+    a.apply(qv.rb_mut().as_mat_mut(), prev.rb().col(k).as_mat(), par, stack);
 
     // Apply left preconditioner in place if supplied
     if let Some(m) = m {
-        m.apply_in_place(qv.as_mut(), par, stack);
+        m.apply_in_place(qv.rb_mut().as_mat_mut(), par, stack);
     }
 
     let mut h = H.rb_mut().col_mut(k);
     for i in 0..k+1 {
-        let r = qv.col(0).transpose() * q.rb().col(i);
+        let r = qv.rb().transpose() * prev.rb().col(i);
         h[i] = r;
-        zip!(qv.col_mut(0), q.rb().col(i)).for_each(|unzip!(mut y, x)| *y = *y - r * *x);
+        zip!(qv.rb_mut(), prev.rb().col(i)).for_each(|unzip!(mut y, x)| *y = *y - r * *x);
     }
 
-    let norm_v = qv.norm_l2();
+    let norm_v = qv.rb().norm_l2();
     let breakdown_tol = T::from(1.0e-12).unwrap();
     let breakdown_flag: bool = norm_v < breakdown_tol;
 
     h[k+1] = norm_v;
 
     if !breakdown_flag {
-        qv = qv * faer::Scale(one::<T>()/norm_v);
-        q.col_mut(k+1).copy_from(qv.col(0));
+        let inv_norm = one::<T>()/norm_v;
+        zip!(qv.rb_mut()).for_each(|unzip!(mut y)| *y = *y * inv_norm);
     }
     breakdown_flag
 }
@@ -287,48 +289,45 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     T: Float + RealField
 {
     let n = b.nrows();
-    let h_scratch = temp_mat_scratch::<T>(max_iter+1, max_iter);
-    let q_scratch = temp_mat_scratch::<T>(n, max_iter+1);
     let m_scratch = m.map_or(StackReq::empty(), |m| m.apply_in_place_scratch(1, par));
-    let a_scratch = a.apply_scratch(1, par)
-        .or(m_scratch)
-        .or(StackReq::new::<bool>(max_iter));
-    let stackreq = StackReq::all_of(&[h_scratch, q_scratch, a_scratch]);
+    let stackreq = a.apply_scratch(1, par).or(m_scratch);
     let mut buff = MemBuffer::new(stackreq);
     let stack = MemStack::new(&mut buff);
 
     let mut hs = Mat::zeros(max_iter+1, max_iter);
     let mut qs = Mat::zeros(n, max_iter+1);
 
-    // compute initial residual
-    let mut a_x = Mat::zeros(b.nrows(), b.ncols());
-    a.apply(a_x.as_mut(), x.as_ref(), par, stack);
-    let mut r = b - a_x;
-
-    // apply left preconditioner in place if supplied
-    if let Some(m) = m {
-        m.apply_in_place(r.as_mut(), par, stack);
-    }
-
+    // compute the (preconditioned) initial residual directly in the first
+    // column of the krylov basis and normalize it in place
     let b_norm = b.norm_l2();
-    let r_norm = r.norm_l2();
+    let r_norm = {
+        let mut r = qs.col_mut(0).as_mat_mut();
+        a.apply(r.rb_mut(), x.as_ref(), par, stack);
+        zip!(r.rb_mut(), b).for_each(|unzip!(mut r, b)| *r = *b - *r);
+
+        // apply left preconditioner in place if supplied
+        if let Some(m) = m {
+            m.apply_in_place(r.rb_mut(), par, stack);
+        }
+
+        let r_norm = r.rb().norm_l2();
+        let inv_r_norm = one::<T>() / r_norm;
+        zip!(r.rb_mut()).for_each(|unzip!(mut r)| *r = *r * inv_r_norm);
+        r_norm
+    };
     let mut error = r_norm / b_norm;
 
     // Initialize 1D vectors
     let mut sn: Vec<T> = vec![zero(); max_iter];
     let mut cs: Vec<T> = vec![zero(); max_iter];
-    // let mut e1 = vec![0.; max_iter + 1];
-    let mut e1: Mat<T> = Mat::zeros(max_iter+1, 1);
-    e1[(0, 0)] = one::<T>();
-    let mut e = vec![error];
 
-    let mut beta = faer::Scale(r_norm) * e1;
-    let q = r * faer::Scale(one::<T>()/r_norm);
-    qs.col_mut(0).copy_from(q.col(0));
+    // residual vector: beta = r_norm * e1
+    let mut beta: Mat<T> = Mat::zeros(max_iter+1, 1);
+    beta[(0, 0)] = r_norm;
 
     let mut k_iters = 0;
     for k in 0..max_iter {
-        let _brkdwn = arnoldi(&a, hs.as_mut(), qs.as_mut(), k, m, par, stack);
+        let brkdwn = arnoldi(&a, hs.as_mut(), qs.as_mut(), k, m, par, stack);
         apply_givens_rotation(hs.col_mut(k), &mut cs, &mut sn, k);
 
         // Update the residual vector
@@ -336,10 +335,9 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
         beta[(k, 0)] = cs[k] * beta[(k, 0)];
         error = (beta[(k + 1, 0)]).abs() / b_norm;
 
-        // Save the error
-        e.push(error);
         k_iters += 1;
-        if error <= threshold {
+        // stop on convergence or breakdown (no new Krylov direction left)
+        if error <= threshold || brkdwn {
             break;
         }
     }
@@ -348,11 +346,11 @@ pub fn gmres<'a, T, Lop: LinOp<T>>(
     let H = hs.get(0..k_iters, 0..k_iters);
     let V = qs.get(0..n, 0..k_iters);
 
-    // compute solution
-    let h_qr = H.col_piv_qr();
-    let y2 = h_qr.solve(&beta.get(0..k_iters, 0..1));
+    // compute solution: H is upper triangular after the givens rotations
+    let mut y = beta.get(0..k_iters, 0..1).to_owned();
+    solve_upper_triangular_in_place(H, y.as_mut(), Par::Seq);
 
-    x += V.get(0..V.nrows(), 0..y2.nrows()) * y2;
+    matmul(x.rb_mut(), Accum::Add, V, y.as_ref(), one::<T>(), Par::Seq);
     if error <= threshold {
         Ok((error, k_iters))
     } else {
